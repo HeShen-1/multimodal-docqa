@@ -1,0 +1,40 @@
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# 数据文件
+data/documents/*
+data/processed/*
+data/vector_db/*
+!data/documents/.gitkeep
+!data/processed/.gitkeep
+!data/vector_db/.gitkeep
+
+# 日志
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 环境变量
+.env
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
