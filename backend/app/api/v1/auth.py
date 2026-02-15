@@ -16,7 +16,7 @@ from app.dependencies import get_db
 from app.config import get_settings
 
 
-router = APIRouter(prefix="/auth", tags=["认证"])
+router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
 
 
@@ -143,7 +143,19 @@ async def login(
         }
         
         access_token = auth_service.create_access_token(token_data)
-        refresh_token = auth_service.create_refresh_token(token_data)
+        refresh_token, jti = auth_service.create_refresh_token(token_data)
+        
+        # 保存 Refresh Token 到数据库
+        expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+        await auth_service.save_refresh_token(
+            db=db,
+            user_id=str(user.id),
+            token=refresh_token,
+            jti=jti,
+            expires_at=expires_at,
+            device_info=request.headers.get("User-Agent"),
+            ip_address=request.client.host if request.client else "127.0.0.1"
+        )
         
         logger.info(f"用户登录成功: {user.username}")
         
@@ -165,18 +177,21 @@ async def login(
 
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
-async def logout(current_user: dict = Depends(get_current_user)):
+async def logout(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
     用户登出
     
-    将当前Token加入黑名单
+    撤销用户的所有 Refresh Token
     """
     try:
-        # 这里需要从请求头中获取Token
-        # 由于已经通过认证，Token已经被验证过
-        # 我们需要将Token加入黑名单
+        user_id = current_user.get("user_id")
         
-        # 注意：这里简化处理，实际应该从请求中获取完整Token
+        # 撤销用户的所有 Refresh Token
+        await auth_service.revoke_all_user_tokens(db, user_id)
+        
         logger.info(f"用户登出: {current_user.get('username')}")
         
         return {"message": "登出成功"}
@@ -200,15 +215,8 @@ async def refresh_token(
     使用刷新令牌获取新的访问令牌
     """
     try:
-        # 验证刷新令牌
-        payload = auth_service.verify_token(refresh_data.refresh_token)
-        
-        # 检查Token类型
-        if payload.get("type") != "refresh":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="无效的刷新令牌"
-            )
+        # 验证刷新令牌（从数据库检查）
+        payload = await auth_service.verify_refresh_token(db, refresh_data.refresh_token)
         
         user_id = payload.get("sub")
         
@@ -302,5 +310,90 @@ async def get_current_user_info(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="获取用户信息失败"
+        )
+
+
+@router.get("/sessions")
+async def get_active_sessions(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取当前用户的活跃会话列表
+    
+    返回所有未过期且未撤销的 Refresh Token 会话
+    """
+    try:
+        user_id = current_user.get("user_id")
+        
+        sessions = await auth_service.get_user_active_sessions(db, user_id)
+        
+        return {
+            "total": len(sessions),
+            "sessions": [
+                {
+                    "id": str(session.id),
+                    "created_at": session.created_at.isoformat(),
+                    "last_used_at": session.last_used_at.isoformat() if session.last_used_at else None,
+                    "expires_at": session.expires_at.isoformat(),
+                    "device_info": session.device_info,
+                    "ip_address": session.ip_address
+                }
+                for session in sessions
+            ]
+        }
+    
+    except Exception as e:
+        logger.error(f"获取活跃会话失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取活跃会话失败"
+        )
+
+
+@router.delete("/sessions/{session_id}")
+async def revoke_session(
+    session_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    撤销指定的会话
+    
+    用于远程登出某个设备的会话
+    """
+    try:
+        user_id = current_user.get("user_id")
+        
+        # 查询会话
+        from app.models.user import RefreshToken
+        result = await db.execute(
+            select(RefreshToken).where(
+                RefreshToken.id == session_id,
+                RefreshToken.user_id == user_id
+            )
+        )
+        session = result.scalar_one_or_none()
+        
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="会话不存在"
+            )
+        
+        # 撤销会话
+        await auth_service.revoke_refresh_token(db, session.jti)
+        
+        logger.info(f"会话已撤销: session_id={session_id}, user={current_user.get('username')}")
+        
+        return {"message": "会话已撤销"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"撤销会话失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="撤销会话失败"
         )
 

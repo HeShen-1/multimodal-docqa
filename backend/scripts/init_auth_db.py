@@ -13,13 +13,10 @@ sys.path.insert(0, str(backend_dir))
 
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import MetaData, Table, Column, String, Boolean, DateTime, Enum
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.sql import func
-import uuid
 
 from app.config import get_settings
-from app.models.user import UserRole
+from app.models.base import Base
+from app.models.user import User, TokenBlacklist
 
 
 async def init_database():
@@ -32,37 +29,9 @@ async def init_database():
         echo=True
     )
     
-    metadata = MetaData()
-    
-    # 定义 users 表
-    users_table = Table(
-        'users',
-        metadata,
-        Column('id', UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
-        Column('username', String(20), unique=True, nullable=False, index=True),
-        Column('email', String(255), unique=True, nullable=False, index=True),
-        Column('password_hash', String(255), nullable=False),
-        Column('role', Enum(UserRole), default=UserRole.USER, nullable=False),
-        Column('avatar', String(500), nullable=True),
-        Column('is_active', Boolean, default=True, nullable=False),
-        Column('created_at', DateTime(timezone=True), server_default=func.now()),
-        Column('last_login_at', DateTime(timezone=True), nullable=True),
-        Column('deleted_at', DateTime(timezone=True), nullable=True)
-    )
-    
-    # 定义 token_blacklist 表
-    token_blacklist_table = Table(
-        'token_blacklist',
-        metadata,
-        Column('id', UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
-        Column('token', String(500), unique=True, nullable=False, index=True),
-        Column('expires_at', DateTime(timezone=True), nullable=False, index=True),
-        Column('created_at', DateTime(timezone=True), server_default=func.now())
-    )
-    
     # 创建所有表
     async with engine.begin() as conn:
-        await conn.run_sync(metadata.create_all)
+        await conn.run_sync(Base.metadata.create_all)
     
     print("✅ 数据库表创建成功！")
     print("📋 已创建的表:")
@@ -81,14 +50,9 @@ async def drop_tables():
         echo=True
     )
     
-    metadata = MetaData()
-    
-    # 定义表结构（用于删除）
-    Table('users', metadata)
-    Table('token_blacklist', metadata)
-    
+    # 删除所有表
     async with engine.begin() as conn:
-        await conn.run_sync(metadata.drop_all)
+        await conn.run_sync(Base.metadata.drop_all)
     
     print("⚠️  数据库表已删除！")
     

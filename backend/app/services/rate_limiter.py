@@ -1,3 +1,4 @@
+import os
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -11,12 +12,15 @@ settings = get_settings()
 
 
 # 创建限流器实例
+# 设置环境变量以避免 slowapi 读取 .env 文件时的编码问题
+os.environ.setdefault("RATELIMIT_ENABLED", str(settings.rate_limit_enabled))
+
 limiter = Limiter(
     key_func=get_remote_address,
     enabled=settings.rate_limit_enabled,
     storage_uri=f"redis://{settings.redis_host}:{settings.redis_port}/{settings.redis_db}",
     strategy="fixed-window",
-    config_filename=None  # 禁用自动读取.env文件，避免编码问题
+    config_filename=""  # 使用空字符串而不是 None，完全禁用配置文件读取
 )
 
 

@@ -47,7 +47,7 @@ python -m app.main
 
 运行自动检查脚本：
 ```powershell
-.\setup_phase1.ps1
+.\setup_phase1.bat
 ```
 
 该脚本会检查：

@@ -64,6 +64,17 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_file: str = "./logs/app.log"
     
+    # 时区配置
+    timezone: str = "Asia/Shanghai"  # 北京时间
+    
+    # 缓存配置 (Phase 3)
+    cache_enabled: bool = True
+    cache_default_expire: int = 1800  # 默认过期时间30分钟
+    cache_query_expire: int = 1800  # 查询结果缓存30分钟
+    cache_document_expire: int = 3600  # 文档缓存1小时
+    cache_user_expire: int = 7200  # 用户信息缓存2小时
+    cache_max_keys: int = 10000  # 最大缓存键数量
+    
     class Config:
         env_file = ".env"
         case_sensitive = False
@@ -74,3 +85,6 @@ def get_settings() -> Settings:
     """获取配置单例"""
     return Settings()
 
+
+# 创建全局配置实例
+settings = get_settings()

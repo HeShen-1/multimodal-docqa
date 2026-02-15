@@ -5,7 +5,9 @@ import jieba
 from rank_bm25 import BM25Okapi
 
 from app.services.embedding_service import EmbeddingService
+from app.services.cache_service import cache_result
 from app.utils.exceptions import RetrievalError
+from app.config import settings
 
 
 class RetrievalService:
@@ -16,6 +18,7 @@ class RetrievalService:
         self.bm25_index = None
         self.bm25_documents = []
     
+    @cache_result(prefix="query", expire=settings.cache_query_expire)
     async def hybrid_search(
         self, 
         query: str, 

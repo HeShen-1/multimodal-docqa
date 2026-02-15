@@ -1,7 +1,8 @@
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field, validator, field_serializer
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 
 class UserRegister(BaseModel):
@@ -57,6 +58,18 @@ class UserResponse(BaseModel):
     
     class Config:
         from_attributes = True
+    
+    @field_serializer('created_at', 'last_login_at')
+    def serialize_datetime(self, dt: Optional[datetime], _info):
+        """将UTC时间转换为北京时间"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            # 如果是naive datetime，假设为UTC
+            dt = dt.replace(tzinfo=ZoneInfo('UTC'))
+        # 转换为北京时间
+        beijing_time = dt.astimezone(ZoneInfo('Asia/Shanghai'))
+        return beijing_time.strftime('%Y-%m-%d %H:%M:%S')
 
 
 class UserProfile(BaseModel):
@@ -75,4 +88,16 @@ class UserProfile(BaseModel):
     
     class Config:
         from_attributes = True
+    
+    @field_serializer('created_at', 'last_login_at')
+    def serialize_datetime(self, dt: Optional[datetime], _info):
+        """将UTC时间转换为北京时间"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            # 如果是naive datetime，假设为UTC
+            dt = dt.replace(tzinfo=ZoneInfo('UTC'))
+        # 转换为北京时间
+        beijing_time = dt.astimezone(ZoneInfo('Asia/Shanghai'))
+        return beijing_time.strftime('%Y-%m-%d %H:%M:%S')
 

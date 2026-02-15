@@ -21,11 +21,12 @@ def get_engine():
         settings = get_settings()
         _engine = create_async_engine(
             settings.database_url,
-            echo=settings.debug,
+            echo=False,  # 关闭 SQL 日志输出
             pool_size=20,
             max_overflow=10,
             pool_timeout=30,
-            pool_recycle=3600
+            pool_recycle=3600,
+            pool_pre_ping=True  # 在使用连接前检查连接是否有效
         )
     return _engine
 
