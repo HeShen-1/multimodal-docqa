@@ -26,14 +26,14 @@ numpy==1.26.4
 PyMuPDF==1.24.5
 python-docx==1.1.2
 
-# OCR相关（使用兼容 NumPy 1.23.5 的版本）
-opencv-python==4.6.0.66
-opencv-contrib-python==4.6.0.66
+# OCR相关（使用 headless 版本，不需要 GUI 库）
+opencv-python-headless==4.10.0.84
+opencv-contrib-python-headless==4.10.0.84
 paddleocr==2.7.3
 paddlepaddle==2.6.2
 
 # 文本处理
-jieba==0.42.1
+jieba==0.42
 rank-bm25==0.2.2
 
 # 工具库
@@ -50,4 +50,8 @@ pytest==8.2.2
 pytest-asyncio==0.23.7
 pytest-cov==5.0.0
 
-
+# Phase 4: 文档管理增强
+celery==5.3.6
+kombu==5.3.5
+reportlab==4.0.9
+markdown2==2.4.12

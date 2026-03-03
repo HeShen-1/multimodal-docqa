@@ -1,40 +1,74 @@
-*.pyc
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# 虚拟环境
+# Virtual Environment
 venv/
-env/
 ENV/
-
-# 数据文件
-data/documents/*
-data/processed/*
-data/vector_db/*
-!data/documents/.gitkeep
-!data/processed/.gitkeep
-!data/vector_db/.gitkeep
-
-# 日志
-logs/
-*.log
+env/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# 环境变量
+# Environment variables
 .env
+.env.local
+.env.*.local
+.env.docker
 
-# 测试
-.pytest_cache/
-.coverage
-htmlcov/
+# Logs
+logs/
+*.log
 
-# 系统文件
+# Data
+data/documents/*
+data/processed/*
+data/vector_db/*
+data/exports/*
+!data/.gitkeep
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+docker-compose.override.yml
+
+# OS
 .DS_Store
 Thumbs.db
 
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Backup files
+*.bak
+*.backup
+backup.sql
+redis_backup.rdb

@@ -5,6 +5,7 @@ import shutil
 import time
 from datetime import datetime
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import (
     DocumentResponse, 
@@ -14,9 +15,14 @@ from app.models.document import (
     DocumentStatus
 )
 from app.models.response import ApiResponse
+from app.schemas.document import BatchUploadResponse, BatchStatusResponse
+from app.schemas.tag import DocumentTagRequest
 from app.services.document_processor import DocumentProcessor
 from app.services.embedding_service import EmbeddingService
-from app.dependencies import get_document_processor, get_embedding_service
+from app.services.batch_upload_service import batch_upload_service
+from app.services.tag_service import tag_service
+from app.dependencies import get_document_processor, get_embedding_service, get_db, get_current_user
+from app.models.user import User
 from app.utils.exceptions import (
     UnsupportedFileTypeError, 
     FileSizeExceededError,
@@ -37,9 +43,12 @@ async def upload_document(
     file: UploadFile = File(...),
     description: Optional[str] = None,
     processor: DocumentProcessor = Depends(get_document_processor),
-    embedding_service: EmbeddingService = Depends(get_embedding_service)
+    embedding_service: EmbeddingService = Depends(get_embedding_service),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """上传文档"""
+    from app.models.document_db import Document as DocumentDB
     settings = get_settings()
     
     # 验证文件类型
@@ -74,7 +83,25 @@ async def upload_document(
     
     logger.info(f"文档上传成功: {file.filename} -> {document_id}")
     
-    # 创建文档记录
+    # 获取用户ID
+    user_id = current_user.get("id") if isinstance(current_user, dict) else current_user.id
+    
+    # 创建数据库记录
+    db_document = DocumentDB(
+        id=document_id,
+        user_id=user_id,
+        file_name=file.filename,
+        file_path=str(file_path),
+        file_type=file_ext,
+        file_size=file_size,
+        status="processing",
+        description=description
+    )
+    db.add(db_document)
+    await db.commit()
+    await db.refresh(db_document)
+    
+    # 创建文档记录（内存）
     doc_record = {
         "id": document_id,
         "fileName": file.filename,
@@ -121,6 +148,12 @@ async def upload_document(
         doc_record["imageCount"] = result["metadata"]["image_count"]
         doc_record["updatedAt"] = time.time()
         
+        # 更新数据库记录
+        db_document.status = "completed"
+        db_document.page_count = result["page_count"]
+        db_document.chunk_count = result["metadata"]["chunk_count"]
+        await db.commit()
+        
         processing_status[document_id] = {
             "status": DocumentStatus.COMPLETED,
             "progress": 100,
@@ -133,6 +166,11 @@ async def upload_document(
     except Exception as e:
         logger.error(f"文档处理失败: {e}")
         doc_record["status"] = DocumentStatus.FAILED
+        
+        # 更新数据库记录
+        db_document.status = "failed"
+        await db.commit()
+        
         processing_status[document_id] = {
             "status": DocumentStatus.FAILED,
             "progress": 0,
@@ -144,6 +182,7 @@ async def upload_document(
         code=100000,
         message="上传成功",
         data={
+            "id": document_id,
             "documentId": document_id,
             "fileName": file.filename,
             "fileSize": file_size,
@@ -260,5 +299,183 @@ async def get_document_status(document_id: str):
             "documentId": document_id,
             **status
         }
+    )
+
+
+@router.post("/batch-upload", response_model=ApiResponse, status_code=201)
+async def batch_upload_documents(
+    files: List[UploadFile] = File(...),
+    description: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """批量上传文档（最多10个）"""
+    settings = get_settings()
+    
+    # 验证文件数量
+    if len(files) > 10:
+        raise HTTPException(status_code=400, detail="最多只能上传10个文件")
+    
+    if len(files) == 0:
+        raise HTTPException(status_code=400, detail="至少上传1个文件")
+    
+    # 创建批次
+    batch_id = batch_upload_service.create_batch(len(files))
+    
+    accepted_files = []
+    rejected_files = []
+    file_infos = []
+    
+    upload_dir = Path("./data/documents")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    
+    for file in files:
+        try:
+            # 验证文件类型
+            file_ext = Path(file.filename).suffix.lower()
+            if file_ext not in settings.allowed_file_types:
+                rejected_files.append({
+                    "fileName": file.filename,
+                    "reason": f"不支持的文件类型: {file_ext}"
+                })
+                continue
+            
+            # 验证文件大小
+            file.file.seek(0, 2)
+            file_size = file.file.tell()
+            file.file.seek(0)
+            
+            if file_size > settings.max_file_size:
+                rejected_files.append({
+                    "fileName": file.filename,
+                    "reason": f"文件大小超过限制: {file_size} > {settings.max_file_size}"
+                })
+                continue
+            
+            # 生成文件名
+            document_id = generate_uuid()
+            original_name = Path(file.filename).stem
+            date_str = datetime.now().strftime("%Y%m%d")
+            new_filename = f"{original_name}_{date_str}_{document_id}{file_ext}"
+            file_path = upload_dir / new_filename
+            
+            # 保存文件
+            with file_path.open("wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            
+            # 记录文件信息
+            file_infos.append({
+                "file_path": str(file_path),
+                "file_name": file.filename,
+                "file_size": file_size,
+                "file_type": file.content_type
+            })
+            
+            accepted_files.append(file.filename)
+            
+            logger.info(f"批量上传: {file.filename} -> {document_id}")
+            
+        except Exception as e:
+            logger.error(f"保存文件失败: {file.filename}, 错误: {e}")
+            rejected_files.append({
+                "fileName": file.filename,
+                "reason": str(e)
+            })
+    
+    # 提交批量处理任务
+    user_id = current_user.get("id") if isinstance(current_user, dict) else current_user.id
+    document_ids = await batch_upload_service.process_batch(
+        batch_id, file_infos, user_id
+    )
+    
+    return ApiResponse(
+        code=100000,
+        message="批量上传成功",
+        data=BatchUploadResponse(
+            batch_id=batch_id,
+            total_files=len(files),
+            accepted_files=len(accepted_files),
+            rejected_files=rejected_files,
+            document_ids=document_ids
+        )
+    )
+
+
+@router.get("/batch/{batch_id}/status", response_model=ApiResponse)
+async def get_batch_status(
+    batch_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """获取批量上传状态"""
+    status = batch_upload_service.get_batch_status(batch_id)
+    
+    if not status:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    
+    return ApiResponse(
+        code=100000,
+        message="success",
+        data=BatchStatusResponse(**status)
+    )
+
+
+@router.post("/{document_id}/tags", response_model=ApiResponse)
+async def add_document_tags(
+    document_id: str,
+    tag_request: DocumentTagRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """为文档添加标签"""
+    try:
+        await tag_service.add_tags_to_document(db, document_id, tag_request.tag_ids)
+        
+        # 获取更新后的标签列表
+        tags = await tag_service.get_document_tags(db, document_id)
+        
+        return ApiResponse(
+            code=100000,
+            message="添加成功",
+            data=[{"id": tag.id, "name": tag.name, "color": tag.color} for tag in tags]
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{document_id}/tags", response_model=ApiResponse)
+async def remove_document_tags(
+    document_id: str,
+    tag_request: DocumentTagRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """从文档移除标签"""
+    try:
+        await tag_service.remove_tags_from_document(db, document_id, tag_request.tag_ids)
+        
+        # 获取更新后的标签列表
+        tags = await tag_service.get_document_tags(db, document_id)
+        
+        return ApiResponse(
+            code=100000,
+            message="移除成功",
+            data=[{"id": tag.id, "name": tag.name, "color": tag.color} for tag in tags]
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{document_id}/tags", response_model=ApiResponse)
+async def get_document_tags(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取文档的所有标签"""
+    tags = await tag_service.get_document_tags(db, document_id)
+    
+    return ApiResponse(
+        code=100000,
+        message="success",
+        data=[{"id": tag.id, "name": tag.name, "color": tag.color} for tag in tags]
     )
 

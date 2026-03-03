@@ -9,6 +9,8 @@ from app.api.v1 import documents_router, health_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.conversations import router as conversations_router
 from app.api.v1.cache import router as cache_router
+from app.api.v1.tags import router as tags_router
+from app.api.v1.share import router as share_router
 from app.services.rate_limiter import limiter, rate_limit_exceeded_handler
 
 
@@ -72,6 +74,8 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(cache_router, prefix="/api/v1")  # Phase 3: 缓存管理
+app.include_router(tags_router, prefix="/api/v1")  # Phase 4: 标签管理
+app.include_router(share_router, prefix="/api/v1")  # Phase 4: 文档分享
 
 
 @app.get("/")
@@ -86,7 +90,10 @@ async def root():
             "文档上传与处理",
             "智能问答",
             "多轮对话管理",
-            "缓存优化系统 (Phase 3)"
+            "缓存优化系统 (Phase 3)",
+            "文档标签管理 (Phase 4)",
+            "文档分享功能 (Phase 4)",
+            "批量上传文档 (Phase 4)"
         ]
     }
 

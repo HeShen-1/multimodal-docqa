@@ -1,0 +1,26 @@
+# Modelfile for custom qwen3-vl:2b-thinking-q4_K_M
+
+# 基础模型（如果有的话）
+FROM qwen3-vl:2b
+
+# 或者从本地 GGUF 文件加载
+# FROM /models/qwen3-vl-2b-thinking-q4_K_M.gguf
+
+# 设置参数
+PARAMETER temperature 0.7
+PARAMETER top_p 0.9
+PARAMETER top_k 40
+
+# 系统提示词（可选）
+SYSTEM """
+你是一个经过微调的 Qwen3-VL 模型，专门用于多模态文档问答。
+"""
+
+# 模板（可选）
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+"""
+

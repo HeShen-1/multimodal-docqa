@@ -6,6 +6,7 @@ from app.services.document_processor import DocumentProcessor
 from app.services.embedding_service import EmbeddingService
 from app.services.retrieval_service import RetrievalService
 from app.services.llm_service import LLMService
+from app.services.permission_service import get_current_user
 from app.config import Settings, get_settings
 
 
