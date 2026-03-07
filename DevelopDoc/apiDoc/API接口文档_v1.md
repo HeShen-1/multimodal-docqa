@@ -28,7 +28,7 @@
 
 | 模块 | 接口 | 方法 | 路径 | 说明 |
 |------|------|------|------|------|
-| 文档管理 | 上传文档 | POST | `/documents/upload` | 上传PDF/DOCX文档 |
+| 文档管理 | 上传文档 | POST | `/documents/upload` | 上传常见文档与文本文件 |
 | 文档管理 | 获取文档列表 | GET | `/documents` | 分页获取文档列表 |
 | 文档管理 | 获取文档详情 | GET | `/documents/{id}` | 获取单个文档信息 |
 | 文档管理 | 删除文档 | DELETE | `/documents/{id}` | 删除指定文档 |
@@ -110,7 +110,7 @@ Authorization: Bearer <your_jwt_token>
 
 ### 1. 上传文档
 
-上传PDF或DOCX文档进行处理。
+上传常见文档/文本文件进行处理（如 PDF、DOCX、TXT、MD、CSV、JSON、HTML、XML、YAML）。
 
 **接口地址**: `POST /api/v1/documents/upload`
 
@@ -124,7 +124,7 @@ Authorization: Bearer <token>
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| file | File | 是 | 文档文件（PDF/DOCX）|
+| file | File | 是 | 文档文件（支持：PDF、DOCX、TXT、MD、CSV、TSV、JSON、JSONL、HTML、XML、YAML、LOG、INI）|
 | description | string | 否 | 文档描述 |
 
 **请求示例**:
@@ -655,7 +655,7 @@ curl -X GET http://localhost:8000/api/v1/stats \
   "errors": [
     {
       "field": "file",
-      "message": "仅支持PDF和DOCX格式"
+      "message": "仅支持 PDF、DOCX、TXT、MD、CSV、TSV、JSON、JSONL、HTML、XML、YAML、LOG、INI 格式"
     }
   ],
   "timestamp": "2025-02-13T10:00:00Z"

@@ -2,6 +2,8 @@ from fastapi import APIRouter
 from app.models.response import HealthResponse, ApiResponse, StatsResponse
 import time
 
+from app.services.resilience_service import resilience_manager
+
 router = APIRouter(tags=["health"])
 
 # 记录启动时间
@@ -21,6 +23,17 @@ async def health_check():
             "redis": "unknown",
             "postgres": "unknown"
         }
+    )
+
+
+@router.get("/health/detailed", response_model=ApiResponse)
+async def detailed_health_check():
+    """详细健康检查（Phase 8）"""
+    result = await resilience_manager.check_health()
+    return ApiResponse(
+        code=100000,
+        message="success",
+        data=result,
     )
 
 

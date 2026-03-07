@@ -28,4 +28,5 @@ class Document(Base):
     # 关系
     tags = relationship("Tag", secondary=document_tags, back_populates="documents")
     share_links = relationship("ShareLink", back_populates="document", cascade="all, delete-orphan")
+    query_histories = relationship("QueryHistory", back_populates="document")
 

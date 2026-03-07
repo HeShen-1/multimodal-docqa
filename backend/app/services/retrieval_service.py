@@ -13,8 +13,8 @@ from app.config import settings
 class RetrievalService:
     """混合检索服务"""
     
-    def __init__(self, embedding_service: EmbeddingService):
-        self.embedding_service = embedding_service
+    def __init__(self, embedding_service: EmbeddingService = None):
+        self.embedding_service = embedding_service or EmbeddingService()
         self.bm25_index = None
         self.bm25_documents = []
     
@@ -56,6 +56,42 @@ class RetrievalService:
         except Exception as e:
             logger.error(f"混合检索失败: {e}")
             raise RetrievalError(str(e))
+
+    async def retrieve(
+        self,
+        question: str,
+        document_id: str,
+        top_k: int = 5
+    ) -> List[Dict[str, Any]]:
+        """兼容 Phase5 的单文档检索入口"""
+        results = await self.hybrid_search(
+            query=question,
+            top_k=top_k,
+            document_ids=[document_id]
+        )
+
+        normalized_results = []
+        for item in results:
+            metadata = item.get("metadata", {}) or {}
+            distance = item.get("distance")
+            score = item.get("score")
+            if score is None and isinstance(distance, (float, int)):
+                score = max(0.0, 1.0 - float(distance))
+            if score is None:
+                score = 0.0
+
+            normalized_results.append(
+                {
+                    "content": item.get("content", ""),
+                    "score": float(score),
+                    "document_name": metadata.get("document_name", document_id),
+                    "page": metadata.get("page"),
+                    "chunk_id": item.get("id", ""),
+                    "metadata": metadata,
+                }
+            )
+
+        return normalized_results
     
     async def _vector_search(
         self, 

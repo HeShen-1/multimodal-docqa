@@ -18,6 +18,17 @@ router = APIRouter(prefix="/share", tags=["share"])
 settings = get_settings()
 
 
+def _resolve_current_user_id(current_user: User | dict) -> str:
+    if isinstance(current_user, dict):
+        user_id = current_user.get("user_id") or current_user.get("id")
+    else:
+        user_id = getattr(current_user, "id", None)
+
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="无法识别当前用户")
+    return str(user_id)
+
+
 @router.post("/documents/{document_id}", response_model=ApiResponse, status_code=201)
 async def create_share_link(
     document_id: str,
@@ -27,8 +38,9 @@ async def create_share_link(
 ):
     """创建文档分享链接"""
     try:
+        user_id = _resolve_current_user_id(current_user)
         share_link = await share_service.create_share_link(
-            db, document_id, current_user.id, share_data
+            db, document_id, user_id, share_data
         )
         
         # 构建分享URL
@@ -133,7 +145,8 @@ async def revoke_share_link(
 ):
     """撤销分享链接"""
     try:
-        success = await share_service.revoke_share_link(db, share_id, current_user.id)
+        user_id = _resolve_current_user_id(current_user)
+        success = await share_service.revoke_share_link(db, share_id, user_id)
         if not success:
             raise HTTPException(status_code=404, detail="分享链接不存在")
         

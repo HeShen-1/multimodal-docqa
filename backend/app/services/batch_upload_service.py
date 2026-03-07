@@ -32,7 +32,8 @@ class BatchUploadService:
             "failed": 0,
             "progress": 0,
             "documents": [],
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
         }
         return batch_id
     
@@ -59,6 +60,18 @@ class BatchUploadService:
             if doc["document_id"] == document_id:
                 doc["status"] = status
                 doc["message"] = message
+                doc["updated_at"] = datetime.utcnow().isoformat()
+                if status == "processing" and not doc.get("started_at"):
+                    doc["started_at"] = datetime.utcnow().isoformat()
+                if status in {"completed", "failed"}:
+                    doc["finished_at"] = datetime.utcnow().isoformat()
+                    if doc.get("started_at"):
+                        try:
+                            started = datetime.fromisoformat(doc["started_at"])
+                            finished = datetime.fromisoformat(doc["finished_at"])
+                            doc["duration_seconds"] = round((finished - started).total_seconds(), 3)
+                        except Exception:
+                            pass
                 doc_found = True
                 break
         
@@ -66,7 +79,10 @@ class BatchUploadService:
             batch["documents"].append({
                 "document_id": document_id,
                 "status": status,
-                "message": message
+                "message": message,
+                "started_at": datetime.utcnow().isoformat() if status == "processing" else None,
+                "finished_at": datetime.utcnow().isoformat() if status in {"completed", "failed"} else None,
+                "updated_at": datetime.utcnow().isoformat(),
             })
         
         # 更新统计
@@ -78,6 +94,7 @@ class BatchUploadService:
         batch["failed"] = failed
         batch["processing"] = processing
         batch["progress"] = int((completed + failed) / batch["total_files"] * 100)
+        batch["updated_at"] = datetime.utcnow().isoformat()
     
     async def process_batch(
         self,

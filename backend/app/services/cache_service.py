@@ -96,7 +96,8 @@ class CacheService:
         self, 
         key: str, 
         value: Any, 
-        expire: Optional[int] = None
+        expire: Optional[int] = None,
+        ttl: Optional[int] = None
     ) -> bool:
         """
         设置缓存值
@@ -105,10 +106,14 @@ class CacheService:
             key: 缓存键
             value: 缓存值
             expire: 过期时间（秒）
+            ttl: expire 的别名
             
         Returns:
             是否成功
         """
+        if ttl is not None and expire is None:
+            expire = ttl
+
         if not self._connected or not self.redis_client:
             return False
         

@@ -2,32 +2,38 @@ FROM python:3.11
 
 WORKDIR /app
 
-# 适配 Debian 新的源配置格式（替换为清华源）
-RUN rm -rf /etc/apt/sources.list.d/* && \
-    echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
-    echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-    echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list
-
-# 安装系统依赖（最小化依赖，opencv-python-headless 不需要 GUI 库）
+# 安装系统依赖（包含 OpenCV 和 PaddleOCR 需要的库）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libpq-dev \
-    libglib2.0-0t64 \
+    libglib2.0-0 \
     libgomp1 \
+    libgl1 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
-# 配置 pip 使用清华源
-RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+# 配置 pip 使用清华源并增加超时时间
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip config set global.timeout 300
 
 # 复制依赖文件
 COPY requirements.txt .
 
-# 安装 requirements 依赖
-RUN pip install --no-cache-dir -r requirements.txt
+# 安装依赖并校验 Alembic 可导入
+RUN pip install --no-cache-dir --timeout=300 --retries=5 -r requirements.txt && \
+    python -c "import alembic"
 
-# 复制应用代码
+# Phase 5: 模型缓存目录
+RUN mkdir -p /app/models/cache
+
+# 复制应用代码和迁移配置
 COPY app/ /app/app/
+COPY scripts/ /app/scripts/
+COPY alembic/ /app/alembic/
+COPY alembic.ini /app/alembic.ini
 
 # 创建数据目录
 RUN mkdir -p /app/data /app/logs
@@ -35,6 +41,9 @@ RUN mkdir -p /app/data /app/logs
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
+ENV SENTENCE_TRANSFORMERS_HOME=/app/models/cache
+ENV TRANSFORMERS_CACHE=/app/models/cache
+ENV HF_HOME=/app/models/cache
 
 # 运行 Celery Worker
 CMD ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]

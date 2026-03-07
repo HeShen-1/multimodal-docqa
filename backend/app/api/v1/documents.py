@@ -21,6 +21,7 @@ from app.services.document_processor import DocumentProcessor
 from app.services.embedding_service import EmbeddingService
 from app.services.batch_upload_service import batch_upload_service
 from app.services.tag_service import tag_service
+from app.services.resilience_service import resilience_manager
 from app.dependencies import get_document_processor, get_embedding_service, get_db, get_current_user
 from app.models.user import User
 from app.utils.exceptions import (
@@ -38,6 +39,63 @@ documents_db = {}
 processing_status = {}
 
 
+def _resolve_current_user_id(current_user) -> str:
+    """兼容 dict / ORM User 两种 current_user 形态"""
+    if isinstance(current_user, dict):
+        user_id = current_user.get("user_id") or current_user.get("id")
+    else:
+        user_id = getattr(current_user, "id", None)
+
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="无法识别当前用户")
+    return str(user_id)
+
+
+def _resolve_upload_file_ext(file: UploadFile, allowed_file_types: List[str]) -> str:
+    """根据扩展名或 MIME 类型解析并校验文件类型。"""
+    file_name = file.filename or ""
+    file_ext = Path(file_name).suffix.lower()
+    if file_ext in allowed_file_types:
+        return file_ext
+
+    content_type = (file.content_type or "").lower()
+    mime_to_ext = {
+        "application/pdf": ".pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        "text/plain": ".txt",
+        "text/markdown": ".md",
+        "text/x-markdown": ".md",
+        "text/csv": ".csv",
+        "application/csv": ".csv",
+        "text/tab-separated-values": ".tsv",
+        "application/json": ".json",
+        "application/x-ndjson": ".jsonl",
+        "text/html": ".html",
+        "application/xhtml+xml": ".html",
+        "application/xml": ".xml",
+        "text/xml": ".xml",
+        "application/yaml": ".yaml",
+        "text/yaml": ".yaml",
+        "application/x-yaml": ".yaml",
+        "text/x-yaml": ".yaml",
+    }
+    inferred_ext = mime_to_ext.get(content_type)
+    if inferred_ext and inferred_ext in allowed_file_types:
+        if not file_ext:
+            logger.warning(
+                f"文件缺少扩展名，按 content_type 推断类型: file_name={file_name}, content_type={content_type}, inferred_ext={inferred_ext}"
+            )
+        return inferred_ext
+
+    if not file_ext and content_type.startswith("text/") and ".txt" in allowed_file_types:
+        logger.warning(
+            f"文件缺少扩展名，且 content_type={content_type}，按文本类型回退为 .txt"
+        )
+        return ".txt"
+
+    raise UnsupportedFileTypeError(file_ext or content_type or "unknown", allowed_file_types)
+
+
 @router.post("/upload", response_model=ApiResponse, status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
@@ -50,11 +108,12 @@ async def upload_document(
     """上传文档"""
     from app.models.document_db import Document as DocumentDB
     settings = get_settings()
+    flags = resilience_manager.evaluate_degradation().get("flags", {})
+    if flags.get("uploadLimited"):
+        raise HTTPException(status_code=503, detail="系统重度降级中，暂时限制文档上传")
     
     # 验证文件类型
-    file_ext = Path(file.filename).suffix.lower()
-    if file_ext not in settings.allowed_file_types:
-        raise UnsupportedFileTypeError(file_ext)
+    file_ext = _resolve_upload_file_ext(file, settings.allowed_file_types)
     
     # 验证文件大小
     file.file.seek(0, 2)
@@ -67,8 +126,9 @@ async def upload_document(
     # 生成文档ID
     document_id = generate_uuid()
     
+    source_file_name = file.filename or f"document{file_ext}"
     # 生成文件名：原文件名（不含扩展名）+ 日期 + UUID
-    original_name = Path(file.filename).stem
+    original_name = Path(source_file_name).stem or "document"
     date_str = datetime.now().strftime("%Y%m%d")
     new_filename = f"{original_name}_{date_str}_{document_id}{file_ext}"
     
@@ -81,16 +141,16 @@ async def upload_document(
     with file_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
-    logger.info(f"文档上传成功: {file.filename} -> {document_id}")
+    logger.info(f"文档上传成功: {source_file_name} -> {document_id}")
     
     # 获取用户ID
-    user_id = current_user.get("id") if isinstance(current_user, dict) else current_user.id
+    user_id = _resolve_current_user_id(current_user)
     
     # 创建数据库记录
     db_document = DocumentDB(
         id=document_id,
         user_id=user_id,
-        file_name=file.filename,
+        file_name=source_file_name,
         file_path=str(file_path),
         file_type=file_ext,
         file_size=file_size,
@@ -104,7 +164,7 @@ async def upload_document(
     # 创建文档记录（内存）
     doc_record = {
         "id": document_id,
-        "fileName": file.filename,
+        "fileName": source_file_name,
         "fileType": file.content_type,
         "fileSize": file_size,
         "status": DocumentStatus.PROCESSING,
@@ -184,7 +244,7 @@ async def upload_document(
         data={
             "id": document_id,
             "documentId": document_id,
-            "fileName": file.filename,
+            "fileName": source_file_name,
             "fileSize": file_size,
             "status": doc_record["status"],
             "createdAt": doc_record["createdAt"]
@@ -310,6 +370,9 @@ async def batch_upload_documents(
 ):
     """批量上传文档（最多10个）"""
     settings = get_settings()
+    flags = resilience_manager.evaluate_degradation().get("flags", {})
+    if flags.get("uploadLimited"):
+        raise HTTPException(status_code=503, detail="系统重度降级中，暂时限制批量上传")
     
     # 验证文件数量
     if len(files) > 10:
@@ -330,12 +393,15 @@ async def batch_upload_documents(
     
     for file in files:
         try:
+            source_file_name = file.filename or "document"
+
             # 验证文件类型
-            file_ext = Path(file.filename).suffix.lower()
-            if file_ext not in settings.allowed_file_types:
+            try:
+                file_ext = _resolve_upload_file_ext(file, settings.allowed_file_types)
+            except UnsupportedFileTypeError as exc:
                 rejected_files.append({
-                    "fileName": file.filename,
-                    "reason": f"不支持的文件类型: {file_ext}"
+                    "fileName": source_file_name,
+                    "reason": exc.detail
                 })
                 continue
             
@@ -346,14 +412,14 @@ async def batch_upload_documents(
             
             if file_size > settings.max_file_size:
                 rejected_files.append({
-                    "fileName": file.filename,
+                    "fileName": source_file_name,
                     "reason": f"文件大小超过限制: {file_size} > {settings.max_file_size}"
                 })
                 continue
             
             # 生成文件名
             document_id = generate_uuid()
-            original_name = Path(file.filename).stem
+            original_name = Path(source_file_name).stem or "document"
             date_str = datetime.now().strftime("%Y%m%d")
             new_filename = f"{original_name}_{date_str}_{document_id}{file_ext}"
             file_path = upload_dir / new_filename
@@ -365,24 +431,25 @@ async def batch_upload_documents(
             # 记录文件信息
             file_infos.append({
                 "file_path": str(file_path),
-                "file_name": file.filename,
+                "file_name": source_file_name,
                 "file_size": file_size,
                 "file_type": file.content_type
             })
             
-            accepted_files.append(file.filename)
+            accepted_files.append(source_file_name)
             
-            logger.info(f"批量上传: {file.filename} -> {document_id}")
+            logger.info(f"批量上传: {source_file_name} -> {document_id}")
             
         except Exception as e:
-            logger.error(f"保存文件失败: {file.filename}, 错误: {e}")
+            source_file_name = file.filename or "document"
+            logger.error(f"保存文件失败: {source_file_name}, 错误: {e}")
             rejected_files.append({
-                "fileName": file.filename,
+                "fileName": source_file_name,
                 "reason": str(e)
             })
     
     # 提交批量处理任务
-    user_id = current_user.get("id") if isinstance(current_user, dict) else current_user.id
+    user_id = _resolve_current_user_id(current_user)
     document_ids = await batch_upload_service.process_batch(
         batch_id, file_infos, user_id
     )

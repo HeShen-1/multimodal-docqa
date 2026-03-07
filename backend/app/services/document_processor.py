@@ -6,9 +6,28 @@ from loguru import logger
 from docx import Document as DocxDocument
 from paddleocr import PaddleOCR
 import io
+import csv
+import json
+import re
+import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 from PIL import Image
 
 from app.config import get_settings
+
+
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self._fragments: List[str] = []
+
+    def handle_data(self, data: str):
+        text = data.strip()
+        if text:
+            self._fragments.append(text)
+
+    def get_text(self) -> str:
+        return "\n".join(self._fragments)
 
 
 class DocumentProcessor:
@@ -46,6 +65,16 @@ class DocumentProcessor:
             return await self._process_pdf(file_path)
         elif file_ext in ['.docx', '.doc']:
             return await self._process_docx(file_path)
+        elif file_ext in ['.txt', '.md', '.log', '.ini', '.yaml', '.yml']:
+            return await self._process_plain_text(file_path)
+        elif file_ext in ['.csv', '.tsv']:
+            return await self._process_csv(file_path)
+        elif file_ext in ['.json', '.jsonl']:
+            return await self._process_json(file_path)
+        elif file_ext in ['.html', '.htm']:
+            return await self._process_html(file_path)
+        elif file_ext == '.xml':
+            return await self._process_xml(file_path)
         else:
             raise ValueError(f"不支持的文件格式: {file_ext}")
     
@@ -151,6 +180,101 @@ class DocumentProcessor:
                 "chunk_count": len(text_chunks),
                 "image_count": len(images)
             }
+        }
+
+    async def _process_plain_text(self, file_path: Path) -> Dict[str, Any]:
+        """处理 TXT/Markdown 文本文件"""
+        content = self._read_text_file(file_path)
+        return self._build_text_result(content, "文本")
+
+    async def _process_csv(self, file_path: Path) -> Dict[str, Any]:
+        """处理 CSV/TSV 文件"""
+        content = self._read_text_file(file_path)
+        delimiter = "\t" if file_path.suffix.lower() == ".tsv" else ","
+        rows = []
+        for row in csv.reader(io.StringIO(content), delimiter=delimiter):
+            if any(cell.strip() for cell in row):
+                rows.append(" | ".join(cell.strip() for cell in row))
+        normalized = "\n".join(rows) if rows else content
+        return self._build_text_result(normalized, "表格")
+
+    async def _process_json(self, file_path: Path) -> Dict[str, Any]:
+        """处理 JSON/JSONL 文件"""
+        content = self._read_text_file(file_path)
+        if file_path.suffix.lower() == ".jsonl":
+            records = []
+            for line in content.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.dumps(json.loads(line), ensure_ascii=False))
+                except json.JSONDecodeError:
+                    records.append(line)
+            normalized = "\n".join(records)
+        else:
+            try:
+                normalized = json.dumps(json.loads(content), ensure_ascii=False, indent=2)
+            except json.JSONDecodeError:
+                normalized = content
+        return self._build_text_result(normalized, "JSON")
+
+    async def _process_html(self, file_path: Path) -> Dict[str, Any]:
+        """处理 HTML 文件"""
+        content = self._read_text_file(file_path)
+        parser = _HTMLTextExtractor()
+        parser.feed(content)
+        normalized = parser.get_text()
+        if not normalized:
+            normalized = re.sub(r"<[^>]+>", " ", content)
+            normalized = re.sub(r"\s+", " ", normalized).strip()
+        return self._build_text_result(normalized, "HTML")
+
+    async def _process_xml(self, file_path: Path) -> Dict[str, Any]:
+        """处理 XML 文件"""
+        content = self._read_text_file(file_path)
+        try:
+            root = ET.fromstring(content)
+            normalized = "\n".join(
+                text.strip() for text in root.itertext() if text and text.strip()
+            )
+        except ET.ParseError:
+            normalized = content
+        return self._build_text_result(normalized, "XML")
+
+    def _read_text_file(self, file_path: Path) -> str:
+        encodings = ["utf-8", "utf-8-sig", "gb18030", "latin-1"]
+        decode_error = None
+        for encoding in encodings:
+            try:
+                return file_path.read_text(encoding=encoding)
+            except UnicodeDecodeError as exc:
+                decode_error = exc
+                continue
+        if decode_error is not None:
+            raise ValueError(f"文本文件解码失败: {decode_error}")
+        raise ValueError("文本文件读取失败")
+
+    def _build_text_result(self, content: str, file_kind: str) -> Dict[str, Any]:
+        chunks = self._chunk_text(content)
+        text_chunks = [
+            {
+                "content": chunk,
+                "page": 1,
+                "chunk_index": idx,
+                "type": "text",
+            }
+            for idx, chunk in enumerate(chunks)
+        ]
+        logger.info(f"{file_kind}处理完成: {len(text_chunks)} 个文本块")
+        return {
+            "text_chunks": text_chunks,
+            "images": [],
+            "page_count": 1,
+            "metadata": {
+                "chunk_count": len(text_chunks),
+                "image_count": 0,
+            },
         }
     
     def _chunk_text(self, text: str) -> List[str]:

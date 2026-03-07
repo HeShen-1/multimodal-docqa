@@ -1,11 +1,17 @@
 import httpx
 import requests
-import chromadb
+import os
 import asyncio
 from typing import List, Dict, Any
 from loguru import logger
 
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+
+import chromadb
+from chromadb.config import Settings as ChromaSettings
+
 from app.config import Settings, get_settings
+from app.services.resilience_service import CircuitBreakerOpenError, resilience_manager
 from app.utils.exceptions import OllamaConnectionError
 
 
@@ -21,7 +27,12 @@ class EmbeddingService:
         
         # 初始化ChromaDB
         self.chroma_client = chromadb.PersistentClient(
-            path=self.settings.chroma_persist_dir
+            path=self.settings.chroma_persist_dir,
+            settings=ChromaSettings(
+                anonymized_telemetry=False,
+                chroma_product_telemetry_impl="app.services.chroma_telemetry.NoOpProductTelemetryClient",
+                chroma_telemetry_impl="app.services.chroma_telemetry.NoOpProductTelemetryClient",
+            ),
         )
         
         # 创建文本collection（明确指定维度为 1024）
@@ -93,7 +104,13 @@ class EmbeddingService:
                                 logger.info(f"Model: {self.embedding_model}, Text Length: {len(text)}")
                                 
                                 # 在线程池中运行同步请求
-                                response = await asyncio.to_thread(_sync_request)
+                                response = await resilience_manager.execute(
+                                    service_name="ollama_embedding",
+                                    operation_name="embedding_encode",
+                                    operation=_sync_request,
+                                    timeout_seconds=60,
+                                    enable_retry=False,
+                                )
                                 
                                 logger.info(f"收到响应: status={response.status_code}")
                                 
@@ -124,6 +141,9 @@ class EmbeddingService:
                                         logger.error(f"请求文本: {text[:100]}...")
                                         raise OllamaConnectionError()
                                         
+                            except CircuitBreakerOpenError:
+                                logger.error("Embedding 服务熔断开启")
+                                raise OllamaConnectionError()
                             except requests.exceptions.ConnectionError as e:
                                 logger.error(f"无法连接到Ollama服务: {e}")
                                 raise OllamaConnectionError()
@@ -154,6 +174,13 @@ class EmbeddingService:
         except Exception as e:
             logger.error(f"向量化过程异常: {e}")
             raise OllamaConnectionError()
+
+    async def embed_query(self, query: str) -> List[float]:
+        """对单条查询文本做向量化"""
+        embeddings = await self.encode_text([query])
+        if not embeddings:
+            raise OllamaConnectionError()
+        return embeddings[0]
     
     async def add_text_chunks(
         self, 

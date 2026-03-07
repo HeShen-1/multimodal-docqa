@@ -9,6 +9,7 @@ from loguru import logger
 
 from app.config import Settings, get_settings
 from app.prompts import THINKING_PROMPT, SIMPLE_QA_PROMPT
+from app.services.resilience_service import CircuitBreakerOpenError, resilience_manager
 from app.utils.exceptions import OllamaConnectionError
 
 
@@ -99,8 +100,18 @@ class LLMService:
             url = f"{self.ollama_base_url}/api/generate"
             response = requests.post(url, json=payload, timeout=120)
             return response
-        
-        response = await asyncio.to_thread(_sync_request)
+
+        try:
+            response = await resilience_manager.execute(
+                service_name="ollama_llm",
+                operation_name="llm_generate_once",
+                operation=_sync_request,
+                timeout_seconds=120,
+                enable_retry=True,
+            )
+        except CircuitBreakerOpenError:
+            logger.error("Ollama 熔断开启，拒绝本次请求")
+            raise OllamaConnectionError()
         
         if response.status_code != 200:
             logger.error(f"LLM生成失败: {response.text}")
@@ -215,7 +226,13 @@ class LLMService:
                     return response
                 
                 logger.info(f"发送通用对话请求，问题: {query}")
-                response = await asyncio.to_thread(_sync_request)
+                response = await resilience_manager.execute(
+                    service_name="ollama_llm",
+                    operation_name="llm_generate_general",
+                    operation=_sync_request,
+                    timeout_seconds=60,
+                    enable_retry=True,
+                )
                 
                 if response.status_code != 200:
                     logger.error(f"LLM生成失败: {response.text}")
@@ -241,6 +258,16 @@ class LLMService:
                     "answer": response_text
                 }
             
+        except CircuitBreakerOpenError:
+            logger.error("Ollama 熔断开启，通用对话降级返回默认答复")
+            if stream:
+                async def error_generator():
+                    yield "抱歉，服务暂时繁忙，请稍后重试。"
+                return error_generator()
+            return {
+                "thinking": [],
+                "answer": "抱歉，服务暂时繁忙，请稍后重试。"
+            }
         except Exception as e:
             logger.error(f"通用对话生成失败: {e}")
             if stream:

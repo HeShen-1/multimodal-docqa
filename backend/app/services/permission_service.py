@@ -19,9 +19,11 @@ class PermissionService:
         """获取当前用户信息"""
         token = credentials.credentials
         payload = auth_service.verify_token(token)
-        
+
+        user_id = payload.get("sub")
         return {
-            "user_id": payload.get("sub"),
+            "user_id": user_id,
+            "id": user_id,  # 兼容历史代码中使用 id 的场景
             "username": payload.get("username"),
             "role": payload.get("role"),
             "email": payload.get("email")

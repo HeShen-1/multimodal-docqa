@@ -11,6 +11,7 @@ aiohttp==3.9.1
 
 # 数据库
 sqlalchemy==2.0.31
+alembic==1.13.1
 asyncpg==0.29.0
 psycopg2-binary==2.9.9
 redis==5.0.7
@@ -44,6 +45,9 @@ python-dotenv==1.0.1
 loguru==0.7.2
 slowapi==0.1.9
 email-validator==2.1.1
+psutil==5.9.8
+tenacity==9.0.0
+pybreaker==1.2.0
 
 # 测试
 pytest==8.2.2
@@ -55,3 +59,9 @@ celery==5.3.6
 kombu==5.3.5
 reportlab==4.0.9
 markdown2==2.4.12
+
+# Phase 5: 高级检索功能
+sentence-transformers==3.3.1
+transformers==4.46.3
+huggingface-hub==0.26.5
+pgvector==0.2.5

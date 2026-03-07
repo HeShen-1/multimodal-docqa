@@ -56,7 +56,23 @@ class Settings(BaseSettings):
     
     # 文档配置
     max_file_size: int = 10485760  # 10MB
-    allowed_file_types: List[str] = [".pdf", ".docx"]
+    allowed_file_types: List[str] = [
+        ".pdf",
+        ".docx",
+        ".txt",
+        ".md",
+        ".csv",
+        ".tsv",
+        ".json",
+        ".jsonl",
+        ".html",
+        ".htm",
+        ".xml",
+        ".yaml",
+        ".yml",
+        ".log",
+        ".ini",
+    ]
     chunk_size: int = 500
     chunk_overlap: int = 50
     

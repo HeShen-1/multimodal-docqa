@@ -32,6 +32,7 @@ class User(Base):
     # 关系
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
+    query_histories = relationship("QueryHistory", back_populates="user", cascade="all, delete-orphan")
 
 
 class RefreshToken(Base):

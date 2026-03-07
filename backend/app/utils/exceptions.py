@@ -1,3 +1,4 @@
+from typing import List, Optional
 from fastapi import HTTPException, status
 
 
@@ -21,10 +22,13 @@ class DocumentProcessingError(HTTPException):
 
 class UnsupportedFileTypeError(HTTPException):
     """不支持的文件类型异常"""
-    def __init__(self, file_type: str):
+    def __init__(self, file_type: str, allowed_types: Optional[List[str]] = None):
+        detail = f"不支持的文件类型: {file_type}"
+        if allowed_types:
+            detail = f"{detail}，仅支持: {', '.join(allowed_types)}"
         super().__init__(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"不支持的文件类型: {file_type}"
+            detail=detail
         )
 
 

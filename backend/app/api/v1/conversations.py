@@ -27,6 +27,7 @@ from app.services.export_service import ExportService
 from app.services.retrieval_service import RetrievalService
 from app.services.llm_service import LLMService
 from app.services.permission_service import get_current_user
+from app.services.resilience_service import CircuitBreakerOpenError, resilience_manager
 from app.models.user import User
 from app.dependencies import get_db, get_retrieval_service, get_llm_service
 from app.utils.exceptions import NotFoundException, ValidationException
@@ -141,84 +142,121 @@ async def send_message(
     
     logger.info(f"收到对话消息: conversation_id={conversation_id}, content={data.content[:50]}...")
     
-    # 1. 保存用户消息
-    user_message = await ConversationService.add_message(
-        db=db,
-        conversation_id=conversation_id,
-        user_id=current_user["user_id"],
-        role="user",
-        content=data.content
+    degradation = resilience_manager.evaluate_degradation()
+    flags = degradation.get("flags", {})
+    logger.info(
+        f"当前降级状态: level={flags.get('level')}, "
+        f"basic_query_only={flags.get('basicQueryOnly')}, "
+        f"thinking_enabled={flags.get('thinkingChainEnabled')}"
     )
-    
-    # 2. 获取对话信息（包含关联的文档ID）
-    conversation = await ConversationService.get_conversation(
-        db=db,
-        conversation_id=conversation_id,
-        user_id=current_user["user_id"]
-    )
-    
-    # 3. 检索相关文档
-    retrieval_results = await retrieval_service.hybrid_search(
-        query=data.content,
-        top_k=getattr(data, 'top_k', 5),
-        document_ids=conversation.document_ids if conversation.document_ids else None
-    )
-    
-    logger.info(f"检索到 {len(retrieval_results)} 条相关内容")
-    
-    # 4. 生成AI回复
-    enable_thinking = getattr(data, 'enable_thinking', True)
-    temperature = getattr(data, 'temperature', 0.7)
-    
-    if len(retrieval_results) == 0:
-        # 无文档，使用通用对话模式
-        logger.info("未检索到相关文档，切换为通用对话模式")
-        llm_result = await llm_service.generate_general_answer(
-            query=data.content,
-            temperature=temperature
+
+    slot_acquired = resilience_manager.degradation.try_acquire_query_slot()
+    if not slot_acquired:
+        raise HTTPException(status_code=429, detail="系统繁忙，请稍后重试")
+
+    try:
+        # 1. 保存用户消息
+        user_message = await ConversationService.add_message(
+            db=db,
+            conversation_id=conversation_id,
+            user_id=current_user["user_id"],
+            role="user",
+            content=data.content
         )
-        sources_data = []
-    else:
-        # 有文档，生成基于文档的答案
-        llm_result = await llm_service.generate_answer(
-            query=data.content,
-            context=retrieval_results,
-            stream=False,
-            enable_thinking=enable_thinking,
-            temperature=temperature
+
+        # 2. 获取对话信息（包含关联的文档ID）
+        conversation = await ConversationService.get_conversation(
+            db=db,
+            conversation_id=conversation_id,
+            user_id=current_user["user_id"]
         )
-        
-        # 格式化来源
-        sources_data = []
-        for result in retrieval_results:
-            metadata = result.get('metadata', {})
-            sources_data.append({
-                "document_name": metadata.get('document_id', 'unknown'),
-                "page": metadata.get('page', 1),
-                "chunk_id": result.get('id'),
-                "content": result.get('content', '')[:200],
-                "score": 1.0 - result.get('distance', 0) if 'distance' in result else None
-            })
-    
-    processing_time = time.time() - start_time
-    logger.info(f"消息处理完成，耗时: {processing_time:.2f}s")
-    
-    # 5. 保存AI回复
-    assistant_message = await ConversationService.add_message(
-        db=db,
-        conversation_id=conversation_id,
-        user_id=current_user["user_id"],
-        role="assistant",
-        content=llm_result["answer"],
-        thinking=llm_result.get("thinking") if enable_thinking else None,
-        sources=sources_data
-    )
-    
-    # 返回用户消息和AI回复
-    return {
-        "user_message": MessageResponse.model_validate(user_message),
-        "assistant_message": MessageResponse.model_validate(assistant_message)
-    }
+
+        top_k = getattr(data, 'top_k', 5)
+        top_k = min(top_k, flags.get("maxRetrievalTopK", top_k))
+
+        # 3. 检索相关文档
+        retrieval_results = []
+        if not flags.get("basicQueryOnly"):
+            async def _retrieve():
+                return await retrieval_service.hybrid_search(
+                    query=data.content,
+                    top_k=top_k,
+                    document_ids=conversation.document_ids if conversation.document_ids else None
+                )
+
+            retrieval_results = await resilience_manager.execute(
+                service_name="retrieval_service",
+                operation_name="conversation_hybrid_search",
+                operation=_retrieve,
+                timeout_seconds=60,
+                enable_retry=True,
+            )
+
+        logger.info(f"检索到 {len(retrieval_results)} 条相关内容")
+
+        # 4. 生成AI回复
+        enable_thinking = getattr(data, 'enable_thinking', True) and flags.get("thinkingChainEnabled", True)
+        temperature = getattr(data, 'temperature', 0.7)
+
+        if len(retrieval_results) == 0:
+            # 无文档，使用通用对话模式
+            logger.info("未检索到相关文档，切换为通用对话模式")
+            llm_result = await llm_service.generate_general_answer(
+                query=data.content,
+                temperature=temperature
+            )
+            sources_data = []
+        else:
+            # 有文档，生成基于文档的答案
+            llm_result = await llm_service.generate_answer(
+                query=data.content,
+                context=retrieval_results,
+                stream=False,
+                enable_thinking=enable_thinking,
+                temperature=temperature
+            )
+
+            # 格式化来源
+            sources_data = []
+            for result in retrieval_results:
+                metadata = result.get('metadata', {})
+                sources_data.append({
+                    "document_name": metadata.get('document_id', 'unknown'),
+                    "page": metadata.get('page', 1),
+                    "chunk_id": result.get('id'),
+                    "content": result.get('content', '')[:200],
+                    "score": 1.0 - result.get('distance', 0) if 'distance' in result else None
+                })
+
+        if flags.get("simplifiedResponse") and llm_result.get("answer"):
+            original_answer = llm_result["answer"]
+            if len(original_answer) > 500:
+                llm_result["answer"] = original_answer[:500] + "\n\n[系统降级中，返回简化内容]"
+
+        processing_time = time.time() - start_time
+        logger.info(f"消息处理完成，耗时: {processing_time:.2f}s")
+
+        # 5. 保存AI回复
+        assistant_message = await ConversationService.add_message(
+            db=db,
+            conversation_id=conversation_id,
+            user_id=current_user["user_id"],
+            role="assistant",
+            content=llm_result["answer"],
+            thinking=llm_result.get("thinking") if enable_thinking else None,
+            sources=sources_data
+        )
+
+        # 返回用户消息和AI回复
+        return {
+            "user_message": MessageResponse.model_validate(user_message),
+            "assistant_message": MessageResponse.model_validate(assistant_message)
+        }
+    except CircuitBreakerOpenError as exc:
+        logger.error(f"下游服务熔断: {exc}")
+        raise HTTPException(status_code=503, detail="下游服务暂时不可用，请稍后再试")
+    finally:
+        resilience_manager.degradation.release_query_slot()
 
 
 @router.post("/{conversation_id}/messages/stream")
@@ -243,8 +281,17 @@ async def send_message_stream(
     - done: 完成信号
     - error: 错误信息
     """
+    degradation = resilience_manager.evaluate_degradation()
+    flags = degradation.get("flags", {})
+
     async def generate():
+        slot_acquired = False
         try:
+            slot_acquired = resilience_manager.degradation.try_acquire_query_slot()
+            if not slot_acquired:
+                yield f"data: {json.dumps({'type': 'error', 'content': '系统繁忙，请稍后重试'}, ensure_ascii=False)}\n\n"
+                return
+
             logger.info(f"流式对话: conversation_id={conversation_id}, content={data.content[:50]}...")
             
             # 1. 保存用户消息
@@ -264,16 +311,30 @@ async def send_message_stream(
             )
             
             # 3. 检索相关文档
-            retrieval_results = await retrieval_service.hybrid_search(
-                query=data.content,
-                top_k=getattr(data, 'top_k', 5),
-                document_ids=conversation.document_ids if conversation.document_ids else None
-            )
+            top_k = getattr(data, 'top_k', 5)
+            top_k = min(top_k, flags.get("maxRetrievalTopK", top_k))
+
+            retrieval_results = []
+            if not flags.get("basicQueryOnly"):
+                async def _retrieve():
+                    return await retrieval_service.hybrid_search(
+                        query=data.content,
+                        top_k=top_k,
+                        document_ids=conversation.document_ids if conversation.document_ids else None
+                    )
+
+                retrieval_results = await resilience_manager.execute(
+                    service_name="retrieval_service",
+                    operation_name="conversation_stream_hybrid_search",
+                    operation=_retrieve,
+                    timeout_seconds=60,
+                    enable_retry=True,
+                )
             
             # 发送检索状态
             yield f"data: {json.dumps({'type': 'status', 'content': f'检索到{len(retrieval_results)}条相关内容'}, ensure_ascii=False)}\n\n"
             
-            enable_thinking = getattr(data, 'enable_thinking', True)
+            enable_thinking = getattr(data, 'enable_thinking', True) and flags.get("thinkingChainEnabled", True)
             temperature = getattr(data, 'temperature', 0.7)
             
             # 4. 生成AI回复
@@ -381,6 +442,9 @@ async def send_message_stream(
         except Exception as e:
             logger.error(f"流式查询失败: {e}")
             yield f"data: {json.dumps({'type': 'error', 'content': f'查询失败: {str(e)}'}, ensure_ascii=False)}\n\n"
+        finally:
+            if slot_acquired:
+                resilience_manager.degradation.release_query_slot()
     
     return StreamingResponse(generate(), media_type="text/event-stream")
 
