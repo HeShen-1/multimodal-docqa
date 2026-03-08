@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
-    with path.open("r", encoding="utf-8") as file:
+    with path.open("r", encoding="utf-8-sig") as file:
         return [json.loads(line) for line in file if line.strip()]
 
 
@@ -44,7 +44,7 @@ def ensure_training_dependencies() -> dict[str, Any]:
     try:
         import torch
         from datasets import Dataset
-        from peft import LoraConfig
+        from peft import LoraConfig, prepare_model_for_kbit_training
         from transformers import (
             AutoModelForCausalLM,
             AutoTokenizer,
@@ -61,6 +61,7 @@ def ensure_training_dependencies() -> dict[str, Any]:
         "torch": torch,
         "Dataset": Dataset,
         "LoraConfig": LoraConfig,
+        "prepare_model_for_kbit_training": prepare_model_for_kbit_training,
         "AutoModelForCausalLM": AutoModelForCausalLM,
         "AutoTokenizer": AutoTokenizer,
         "BitsAndBytesConfig": BitsAndBytesConfig,
@@ -108,6 +109,45 @@ def build_text_dataset(records: list[dict[str, Any]], tokenizer: Any, dataset_cl
     return dataset_cls.from_list(formatted)
 
 
+def build_training_arguments(args: argparse.Namespace, torch: Any, training_arguments_cls: Any) -> Any:
+    return training_arguments_cls(
+        output_dir=args.output_dir,
+        num_train_epochs=args.num_train_epochs,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        per_device_train_batch_size=args.per_device_train_batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        warmup_ratio=args.warmup_ratio,
+        logging_steps=args.logging_steps,
+        save_strategy=args.save_strategy,
+        save_steps=args.save_steps,
+        bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
+        fp16=torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
+        report_to="none",
+        remove_unused_columns=True,
+        seed=args.seed,
+    )
+
+
+def prepare_model_for_training(
+    model: Any,
+    *,
+    use_4bit: bool,
+    disable_gradient_checkpointing: bool,
+    prepare_model_for_kbit_training_fn: Any,
+) -> Any:
+    if use_4bit:
+        model = prepare_model_for_kbit_training_fn(
+            model,
+            use_gradient_checkpointing=not disable_gradient_checkpointing,
+        )
+    elif not disable_gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+
+    model.config.use_cache = False
+    return model
+
+
 def write_run_summary(args: argparse.Namespace, record_count: int) -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -144,6 +184,7 @@ def main() -> None:
     BitsAndBytesConfig = deps["BitsAndBytesConfig"]
     TrainingArguments = deps["TrainingArguments"]
     SFTTrainer = deps["SFTTrainer"]
+    prepare_model_for_kbit_training = deps["prepare_model_for_kbit_training"]
 
     if not args.no_4bit and not torch.cuda.is_available():
         raise RuntimeError("当前未检测到 CUDA GPU，无法执行 4-bit QLoRA。请改用 `--no-4bit` 或在 CUDA 环境运行。")
@@ -166,10 +207,12 @@ def main() -> None:
         model_kwargs["device_map"] = "auto"
 
     model = AutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
-    model.config.use_cache = False
-
-    if not args.disable_gradient_checkpointing:
-        model.gradient_checkpointing_enable()
+    model = prepare_model_for_training(
+        model,
+        use_4bit=not args.no_4bit,
+        disable_gradient_checkpointing=args.disable_gradient_checkpointing,
+        prepare_model_for_kbit_training_fn=prepare_model_for_kbit_training,
+    )
 
     peft_config = LoraConfig(
         r=args.lora_r,
@@ -182,23 +225,7 @@ def main() -> None:
 
     train_dataset = build_text_dataset(records, tokenizer, Dataset)
 
-    training_args = TrainingArguments(
-        output_dir=args.output_dir,
-        num_train_epochs=args.num_train_epochs,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        warmup_ratio=args.warmup_ratio,
-        logging_steps=args.logging_steps,
-        save_strategy=args.save_strategy,
-        save_steps=args.save_steps,
-        bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
-        fp16=torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
-        report_to="none",
-        remove_unused_columns=False,
-        seed=args.seed,
-    )
+    training_args = build_training_arguments(args, torch, TrainingArguments)
 
     trainer = SFTTrainer(
         model=model,
