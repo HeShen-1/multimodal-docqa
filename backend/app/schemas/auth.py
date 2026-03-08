@@ -1,8 +1,16 @@
+import re
+import unicodedata
 from pydantic import BaseModel, EmailStr, Field, validator, field_serializer
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
+
+
+def _normalize_identifier(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = re.sub(r"[\u200B\u200C\u200D\uFEFF]", "", normalized)
+    return normalized.strip()
 
 
 class UserRegister(BaseModel):
@@ -13,9 +21,16 @@ class UserRegister(BaseModel):
     
     @validator('username')
     def validate_username(cls, v):
-        if not v.isalnum() and '_' not in v:
+        v = _normalize_identifier(v)
+        if len(v) < 3 or len(v) > 20:
+            raise ValueError('用户名长度必须在3到20字符之间')
+        if not re.fullmatch(r"[A-Za-z0-9_]+", v):
             raise ValueError('用户名只能包含字母、数字和下划线')
         return v
+
+    @validator('email')
+    def normalize_email(cls, v):
+        return _normalize_identifier(str(v)).lower()
     
     @validator('password')
     def validate_password(cls, v):
@@ -30,6 +45,13 @@ class UserLogin(BaseModel):
     """用户登录请求"""
     username: str = Field(..., description="用户名或邮箱")
     password: str = Field(..., description="密码")
+
+    @validator('username')
+    def normalize_username(cls, v):
+        v = _normalize_identifier(v)
+        if not v:
+            raise ValueError('用户名或邮箱不能为空')
+        return v
 
 
 class TokenResponse(BaseModel):

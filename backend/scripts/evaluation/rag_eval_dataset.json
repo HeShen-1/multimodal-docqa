@@ -1,0 +1,162 @@
+[
+  {
+    "id": "q01",
+    "question": "系统的完整主链路是什么？",
+    "target_documents": ["product_manual.md"],
+    "expected_evidence": ["product_manual.md#Pipeline"],
+    "expected_answer_points": ["上传", "解析与切块", "向量化", "检索", "流式回答", "分享访问"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q02",
+    "question": "当前稳定支持哪些文件类型？",
+    "target_documents": ["product_manual.md"],
+    "expected_evidence": ["product_manual.md#Supported Files"],
+    "expected_answer_points": ["PDF", "DOCX", "TXT", "Markdown", "CSV", "JSON"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q03",
+    "question": "批量上传最多允许多少个文件？",
+    "target_documents": ["product_manual.md"],
+    "expected_evidence": ["product_manual.md#Upload Rules"],
+    "expected_answer_points": ["10 个文件"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q04",
+    "question": "默认检索 top_k 是多少？",
+    "target_documents": ["product_manual.md"],
+    "expected_evidence": ["product_manual.md#Upload Rules"],
+    "expected_answer_points": ["top_k=5"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q05",
+    "question": "分享能力支持哪些控制项？",
+    "target_documents": ["product_manual.md"],
+    "expected_evidence": ["product_manual.md#Share Capability"],
+    "expected_answer_points": ["访问密码", "过期时间", "是否允许下载"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q06",
+    "question": "推荐的产品演示路径是什么？",
+    "target_documents": ["product_manual.md"],
+    "expected_evidence": ["product_manual.md#UI Demo"],
+    "expected_answer_points": ["登录", "上传", "流式问答", "生成分享链接", "访问分享页"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q07",
+    "question": "文档和分享的业务判断应当以什么作为真相源？",
+    "target_documents": ["operations_policy.md"],
+    "expected_evidence": ["operations_policy.md#Truth Source"],
+    "expected_answer_points": ["数据库", "进程内缓存仅做临时进度展示"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q08",
+    "question": "详细健康检查会覆盖哪些组件？",
+    "target_documents": ["operations_policy.md"],
+    "expected_evidence": ["operations_policy.md#Health"],
+    "expected_answer_points": ["数据库", "Redis", "LLM", "向量检索", "资源使用情况"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q09",
+    "question": "哪个接口会给出简化健康摘要？",
+    "target_documents": ["operations_policy.md"],
+    "expected_evidence": ["operations_policy.md#Health"],
+    "expected_answer_points": ["/health"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q10",
+    "question": "统计接口会统计哪些核心指标？",
+    "target_documents": ["operations_policy.md"],
+    "expected_evidence": ["operations_policy.md#Health"],
+    "expected_answer_points": ["文档数", "查询数", "切块数", "图片数", "平均处理耗时", "存储占用"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q11",
+    "question": "哪些接口默认要求登录？",
+    "target_documents": ["operations_policy.md"],
+    "expected_evidence": ["operations_policy.md#Access Control"],
+    "expected_answer_points": ["documents", "share 创建/列表/撤销"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q12",
+    "question": "管理员接口的权限边界是什么？",
+    "target_documents": ["operations_policy.md"],
+    "expected_evidence": ["operations_policy.md#Access Control"],
+    "expected_answer_points": ["admin 路由仅管理员可访问"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q13",
+    "question": "每个请求的日志至少要带哪些关键信息？",
+    "target_documents": ["operations_policy.md"],
+    "expected_evidence": ["operations_policy.md#Logging"],
+    "expected_answer_points": ["请求 ID", "用户", "路径", "耗时", "错误原因"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q14",
+    "question": "系统在无证据场景下应采用什么策略？",
+    "target_documents": ["operations_policy.md", "release_notes.md"],
+    "expected_evidence": ["operations_policy.md#Degradation", "release_notes.md#2026.03"],
+    "expected_answer_points": ["受限回答", "未找到依据", "避免编造"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q15",
+    "question": "当前 Prompt 的版本号是什么？",
+    "target_documents": ["release_notes.md"],
+    "expected_evidence": ["release_notes.md#2026.03"],
+    "expected_answer_points": ["2026.03.v1"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q16",
+    "question": "目前固定推荐的检索实验组有哪些？",
+    "target_documents": ["release_notes.md"],
+    "expected_evidence": ["release_notes.md#Retrieval Experiments"],
+    "expected_answer_points": ["纯向量检索", "混合检索", "混合检索 + reranker"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q17",
+    "question": "资源受限时推荐回退到哪种默认方案？",
+    "target_documents": ["release_notes.md"],
+    "expected_evidence": ["release_notes.md#Default Recommendation"],
+    "expected_answer_points": ["混合检索"],
+    "allow_no_answer": false
+  },
+  {
+    "id": "q18",
+    "question": "如果用户询问 GPU 部署参数，文档里是否有明确答案？",
+    "target_documents": ["product_manual.md", "operations_policy.md", "release_notes.md"],
+    "expected_evidence": [],
+    "expected_answer_points": [],
+    "allow_no_answer": true
+  },
+  {
+    "id": "q19",
+    "question": "如果用户询问月度订阅价格，文档里是否有明确答案？",
+    "target_documents": ["product_manual.md", "operations_policy.md", "release_notes.md"],
+    "expected_evidence": [],
+    "expected_answer_points": [],
+    "allow_no_answer": true
+  },
+  {
+    "id": "q20",
+    "question": "数据库真相源和 Prompt 版本化分别落在哪两份文档中？",
+    "target_documents": ["operations_policy.md", "release_notes.md"],
+    "expected_evidence": ["operations_policy.md#Truth Source", "release_notes.md#2026.03"],
+    "expected_answer_points": ["operations_policy.md", "release_notes.md"],
+    "allow_no_answer": false
+  }
+]

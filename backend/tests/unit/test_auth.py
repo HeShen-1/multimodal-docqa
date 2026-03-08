@@ -5,6 +5,7 @@ from datetime import datetime
 
 from app.main import app
 from app.services.auth_service import auth_service
+from app.schemas.auth import UserLogin, UserRegister
 
 
 @pytest.fixture
@@ -149,6 +150,57 @@ def test_password_hashing():
     assert hashed != password
     assert auth_service.verify_password(password, hashed)
     assert not auth_service.verify_password("wrongpassword", hashed)
+
+
+def test_password_hashing_legacy_compatibility():
+    """测试旧版密码哈希兼容与升级判断"""
+    password = "Test1234"
+    legacy_hashed = auth_service.pwd_context.hash(password)
+    modern_hashed = auth_service.hash_password(password)
+
+    assert auth_service.verify_password(password, legacy_hashed)
+    assert auth_service.needs_password_rehash(password, legacy_hashed)
+    assert not auth_service.needs_password_rehash(password, modern_hashed)
+
+
+def test_auth_schema_normalization():
+    """测试登录/注册字段标准化"""
+    register_data = UserRegister(
+        username="  River_User  ",
+        email="  River@Example.COM  ",
+        password="Test1234",
+    )
+    login_data = UserLogin(
+        username="  river_user  ",
+        password="Test1234",
+    )
+
+    assert register_data.username == "River_User"
+    assert register_data.email == "river@example.com"
+    assert login_data.username == "river_user"
+
+    register_data_zero_width = UserRegister(
+        username="\ufeff  River_User  \u200b",
+        email="River@Example.COM",
+        password="Test1234",
+    )
+    login_data_zero_width = UserLogin(
+        username="\ufeff  river_user  \u200b",
+        password="Test1234",
+    )
+
+    assert register_data_zero_width.username == "River_User"
+    assert register_data_zero_width.email == "river@example.com"
+    assert login_data_zero_width.username == "river_user"
+
+
+def test_password_variant_compatibility():
+    """测试密码输入变体兼容（空格/零宽字符）"""
+    password = "Test1234"
+    hashed = auth_service.hash_password(password)
+
+    assert auth_service.verify_password(f"  {password}  ", hashed)
+    assert auth_service.verify_password(f"\ufeff{password}\u200b", hashed)
 
 
 def test_token_creation():

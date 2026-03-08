@@ -1,0 +1,20 @@
+[
+  {
+    "id": "q01",
+    "retrieved_documents": ["product_manual.md"],
+    "citations": ["product_manual.md#Pipeline"],
+    "latency_ms": 812,
+    "manual_relevance": 1.0,
+    "citation_correct": 1.0,
+    "predicted_no_answer": false
+  },
+  {
+    "id": "q18",
+    "retrieved_documents": [],
+    "citations": [],
+    "latency_ms": 436,
+    "manual_relevance": 1.0,
+    "citation_correct": 1.0,
+    "predicted_no_answer": true
+  }
+]

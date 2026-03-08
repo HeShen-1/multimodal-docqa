@@ -10,6 +10,8 @@ import redis
 import uuid
 import hashlib
 import base64
+import re
+import unicodedata
 
 from app.config import get_settings
 from app.models.user import RefreshToken
@@ -47,10 +49,54 @@ class AuthService:
         prepared_password = self._prepare_password(password)
         return self.pwd_context.hash(prepared_password)
     
+    def _verify_prepared_password(self, plain_password: str, hashed_password: str) -> bool:
+        try:
+            prepared_password = self._prepare_password(plain_password)
+            return self.pwd_context.verify(prepared_password, hashed_password)
+        except Exception:
+            return False
+
+    def _verify_legacy_password(self, plain_password: str, hashed_password: str) -> bool:
+        try:
+            return self.pwd_context.verify(plain_password, hashed_password)
+        except Exception:
+            return False
+
+    def _password_variants(self, plain_password: str) -> list[str]:
+        variants = [plain_password]
+
+        without_zero_width = re.sub(r"[\u200B\u200C\u200D\uFEFF]", "", plain_password)
+        normalized = unicodedata.normalize("NFKC", without_zero_width)
+
+        for candidate in (
+            without_zero_width,
+            without_zero_width.strip(),
+            normalized,
+            normalized.strip(),
+        ):
+            if candidate and candidate not in variants:
+                variants.append(candidate)
+        return variants
+
+    def find_matching_password_variant(self, plain_password: str, hashed_password: str) -> Optional[str]:
+        for candidate in self._password_variants(plain_password):
+            if self._verify_prepared_password(candidate, hashed_password):
+                return candidate
+            if self._verify_legacy_password(candidate, hashed_password):
+                return candidate
+        return None
+
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """验证密码"""
-        prepared_password = self._prepare_password(plain_password)
-        return self.pwd_context.verify(prepared_password, hashed_password)
+        return self.find_matching_password_variant(plain_password, hashed_password) is not None
+
+    def needs_password_rehash(self, plain_password: str, hashed_password: str) -> bool:
+        matched_password = self.find_matching_password_variant(plain_password, hashed_password)
+        if not matched_password:
+            return False
+        if self._verify_prepared_password(matched_password, hashed_password):
+            return self.pwd_context.needs_update(hashed_password)
+        return True
     
     def create_access_token(self, data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
         """创建访问令牌"""

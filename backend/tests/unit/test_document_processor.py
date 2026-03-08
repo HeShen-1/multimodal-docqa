@@ -15,6 +15,37 @@ def test_chunk_text(processor):
     assert all(len(chunk) <= processor.chunk_size + 100 for chunk in chunks)
 
 
+def test_chunk_text_makes_forward_progress(processor):
+    """测试长文本在重叠分块时不会卡死或无限增长"""
+    processor.chunk_size = 40
+    processor.chunk_overlap = 20
+    text = ("甲" * 18 + "。" + "乙" * 18 + "。") * 200
+
+    chunks = processor._chunk_text(text)
+
+    assert len(chunks) > 1
+    assert len(chunks) < 2000
+    assert all(chunk.strip() for chunk in chunks)
+    assert chunks[-1].endswith("。")
+
+
+def test_build_chunks_contains_parent_chunk_index(processor):
+    """测试结构化分块会携带父块索引"""
+    text = (
+        "第一章 总览\n"
+        + "这是总览部分。" * 80
+        + "\n\n第二章 细节\n"
+        + "这是细节部分。" * 80
+    )
+
+    chunks, parent_count = processor._build_chunks(text=text, page=1, chunk_type="text")
+
+    assert parent_count >= 1
+    assert len(chunks) > 0
+    assert all("parent_chunk_index" in chunk for chunk in chunks)
+    assert min(chunk["parent_chunk_index"] for chunk in chunks) >= 0
+
+
 @pytest.mark.asyncio
 async def test_process_csv(processor, tmp_path):
     file_path = tmp_path / "sample.csv"

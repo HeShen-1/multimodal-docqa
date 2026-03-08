@@ -17,8 +17,8 @@ def event_loop():
     yield loop
     
     # 在关闭事件循环前，先清理数据库引擎
-    import app.dependencies as deps
-    if deps._engine is not None:
+    deps = sys.modules.get("app.dependencies")
+    if deps is not None and getattr(deps, "_engine", None) is not None:
         try:
             # 强制关闭所有连接
             loop.run_until_complete(deps._engine.dispose())
@@ -166,4 +166,3 @@ def test_document_id(client, auth_headers: dict):
     else:
         print(f"文档上传失败: {response.status_code} - {response.text}")
         raise Exception(f"Failed to create test document: {response.status_code}")
-

@@ -1,18 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
 
-from app.models.response import ApiResponse
-from app.schemas.share import (
-    ShareLinkCreate, 
-    ShareLinkResponse, 
-    ShareAccessRequest,
-    ShareAccessResponse
-)
-from app.services.share_service import share_service
-from app.dependencies import get_db, get_current_user
-from app.models.user import User
 from app.config import get_settings
+from app.dependencies import get_current_user, get_db
+from app.models.response import ApiResponse
+from app.models.user import User
+from app.schemas.share import ShareAccessRequest, ShareAccessResponse, ShareLinkCreate, ShareLinkResponse
+from app.services.permission_service import require_admin
+from app.services.share_service import share_service
+
 
 router = APIRouter(prefix="/share", tags=["share"])
 settings = get_settings()
@@ -23,10 +19,28 @@ def _resolve_current_user_id(current_user: User | dict) -> str:
         user_id = current_user.get("user_id") or current_user.get("id")
     else:
         user_id = getattr(current_user, "id", None)
-
     if user_id is None:
         raise HTTPException(status_code=401, detail="无法识别当前用户")
     return str(user_id)
+
+
+def _build_share_url(token: str) -> str:
+    return f"http://{settings.host}:{settings.port}/api/v1/share/{token}"
+
+
+def _build_share_link_response(link) -> ShareLinkResponse:
+    return ShareLinkResponse(
+        id=link.id,
+        document_id=link.document_id,
+        token=link.token,
+        share_url=_build_share_url(link.token),
+        has_password=link.password is not None,
+        allow_download=link.allow_download,
+        expires_at=link.expires_at,
+        access_count=link.access_count,
+        max_access_count=link.max_access_count,
+        created_at=link.created_at,
+    )
 
 
 @router.post("/documents/{document_id}", response_model=ApiResponse, status_code=201)
@@ -34,69 +48,41 @@ async def create_share_link(
     document_id: str,
     share_data: ShareLinkCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """创建文档分享链接"""
     try:
         user_id = _resolve_current_user_id(current_user)
-        share_link = await share_service.create_share_link(
-            db, document_id, user_id, share_data
-        )
-        
-        # 构建分享URL
-        base_url = f"http://{settings.host}:{settings.port}"
-        share_url = f"{base_url}/api/v1/share/{share_link.token}"
-        
-        return ApiResponse(
-            code=100000,
-            message="创建成功",
-            data=ShareLinkResponse(
-                id=share_link.id,
-                document_id=share_link.document_id,
-                token=share_link.token,
-                share_url=share_url,
-                has_password=share_link.password is not None,
-                allow_download=share_link.allow_download,
-                expires_at=share_link.expires_at,
-                access_count=share_link.access_count,
-                max_access_count=share_link.max_access_count,
-                created_at=share_link.created_at
-            )
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        share_link = await share_service.create_share_link(db, document_id, user_id, share_data)
+        return ApiResponse(code=100000, message="创建成功", data=_build_share_link_response(share_link))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.post("/{token}/access", response_model=ApiResponse)
 async def access_share_link(
     token: str,
     access_data: ShareAccessRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """访问分享链接"""
-    has_access, error_msg, share_link = await share_service.verify_share_access(
-        db, token, access_data.password
-    )
-    
-    if not has_access:
-        raise HTTPException(status_code=403, detail=error_msg)
-    
-    # 获取文档信息（这里简化，实际应从数据库获取）
-    from app.api.v1.documents import documents_db
-    doc = documents_db.get(share_link.document_id)
-    
-    if not doc:
+    has_access, error_msg, share_link = await share_service.verify_share_access(db, token, access_data.password)
+    if not has_access or share_link is None:
+        raise HTTPException(status_code=403, detail=error_msg or "分享访问失败")
+
+    document = await share_service.get_document(db, share_link.document_id)
+    if document is None:
         raise HTTPException(status_code=404, detail="文档不存在")
-    
+
     return ApiResponse(
         code=100000,
         message="访问成功",
         data=ShareAccessResponse(
             document_id=share_link.document_id,
-            file_name=doc["fileName"],
-            file_size=doc["fileSize"],
-            allow_download=share_link.allow_download
-        )
+            file_name=document.file_name,
+            file_size=document.file_size,
+            allow_download=share_link.allow_download,
+        ),
     )
 
 
@@ -105,72 +91,47 @@ async def get_document_share_links(
     document_id: str,
     include_expired: bool = Query(False, alias="includeExpired"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """获取文档的所有分享链接"""
-    share_links = await share_service.get_document_share_links(
-        db, document_id, include_expired
-    )
-    
-    base_url = f"http://{settings.host}:{settings.port}"
-    
-    links = [
-        ShareLinkResponse(
-            id=link.id,
-            document_id=link.document_id,
-            token=link.token,
-            share_url=f"{base_url}/api/v1/share/{link.token}",
-            has_password=link.password is not None,
-            allow_download=link.allow_download,
-            expires_at=link.expires_at,
-            access_count=link.access_count,
-            max_access_count=link.max_access_count,
-            created_at=link.created_at
+    try:
+        user_id = _resolve_current_user_id(current_user)
+        share_links = await share_service.get_document_share_links(
+            db=db,
+            document_id=document_id,
+            user_id=user_id,
+            include_expired=include_expired,
         )
-        for link in share_links
-    ]
-    
-    return ApiResponse(
-        code=100000,
-        message="success",
-        data=links
-    )
+        return ApiResponse(
+            code=100000,
+            message="success",
+            data=[_build_share_link_response(link) for link in share_links],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.delete("/{share_id}", response_model=ApiResponse)
 async def revoke_share_link(
     share_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """撤销分享链接"""
     try:
         user_id = _resolve_current_user_id(current_user)
         success = await share_service.revoke_share_link(db, share_id, user_id)
         if not success:
             raise HTTPException(status_code=404, detail="分享链接不存在")
-        
-        return ApiResponse(
-            code=100000,
-            message="撤销成功",
-            data=None
-        )
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        return ApiResponse(code=100000, message="撤销成功", data=None)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.post("/cleanup", response_model=ApiResponse)
 async def cleanup_expired_links(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    _: dict = Depends(require_admin),
 ):
-    """清理过期的分享链接（管理员功能）"""
-    # TODO: 添加管理员权限检查
     count = await share_service.cleanup_expired_links(db)
-    
-    return ApiResponse(
-        code=100000,
-        message=f"清理了 {count} 个过期链接",
-        data={"count": count}
-    )
-
+    return ApiResponse(code=100000, message=f"清理了 {count} 个过期链接", data={"count": count})

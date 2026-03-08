@@ -35,6 +35,8 @@ class ConversationService:
             创建的对话对象
         """
         # 如果没有提供标题，自动生成
+        normalized_document_ids = document_ids or []
+
         if not title:
             # 获取用户的对话数量
             result = await db.execute(
@@ -47,9 +49,9 @@ class ConversationService:
         conversation = Conversation(
             user_id=user_id,
             title=title,
-            document_ids=document_ids or [],
+            document_ids=normalized_document_ids,
             message_count=0,
-            metadata={}
+            extra_data={}
         )
         
         db.add(conversation)
@@ -171,7 +173,7 @@ class ConversationService:
             content=content,
             thinking=thinking,
             sources=sources,
-            metadata={}
+            extra_data={}
         )
         
         db.add(message)

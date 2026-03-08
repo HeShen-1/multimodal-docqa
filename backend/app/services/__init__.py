@@ -1,8 +1,5 @@
-"""核心服务模块"""
-from .document_processor import *
-from .embedding_service import *
-from .retrieval_service import *
-from .llm_service import *
-from .cache_service import *
-from .cache_manager import *
+"""核心服务模块。
+
+避免在包导入阶段触发重量级依赖初始化，按需从具体模块导入服务。
+"""
 

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from datetime import datetime, timedelta
 from loguru import logger
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.auth import (
@@ -35,9 +35,12 @@ async def register(
     - **password**: 密码（8-32字符，必须包含字母和数字）
     """
     try:
+        normalized_username = user_data.username.strip()
+        normalized_email = user_data.email.strip().lower()
+
         # 检查用户名是否已存在
         result = await db.execute(
-            select(User).where(User.username == user_data.username)
+            select(User).where(func.lower(User.username) == normalized_username.lower())
         )
         if result.scalar_one_or_none():
             raise HTTPException(
@@ -47,7 +50,7 @@ async def register(
         
         # 检查邮箱是否已存在
         result = await db.execute(
-            select(User).where(User.email == user_data.email)
+            select(User).where(func.lower(User.email) == normalized_email)
         )
         if result.scalar_one_or_none():
             raise HTTPException(
@@ -58,8 +61,8 @@ async def register(
         # 创建新用户
         hashed_password = auth_service.hash_password(user_data.password)
         new_user = User(
-            username=user_data.username,
-            email=user_data.email,
+            username=normalized_username,
+            email=normalized_email,
             password_hash=hashed_password,
             role=UserRole.USER
         )
@@ -68,7 +71,7 @@ async def register(
         await db.commit()
         await db.refresh(new_user)
         
-        logger.info(f"新用户注册成功: {user_data.username}")
+        logger.info(f"新用户注册成功: {normalized_username}")
         
         return new_user
     
@@ -99,12 +102,16 @@ async def login(
     返回访问令牌和刷新令牌
     """
     try:
+        login_identifier = login_data.username.strip()
+        login_identifier_lower = login_identifier.lower()
+
         # 查询用户（支持用户名或邮箱登录）
         result = await db.execute(
             select(User).where(
                 or_(
-                    User.username == login_data.username,
-                    User.email == login_data.username
+                    User.username == login_identifier,
+                    func.lower(User.username) == login_identifier_lower,
+                    func.lower(User.email) == login_identifier_lower
                 )
             )
         )
@@ -117,11 +124,22 @@ async def login(
             )
         
         # 验证密码
-        if not auth_service.verify_password(login_data.password, user.password_hash):
+        matched_password = auth_service.find_matching_password_variant(
+            login_data.password,
+            user.password_hash,
+        )
+        if not matched_password:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="用户名或密码错误"
             )
+
+        if matched_password != login_data.password:
+            logger.warning(f"登录请求包含可归一化字符，已兼容处理: {user.username}")
+
+        if auth_service.needs_password_rehash(matched_password, user.password_hash):
+            user.password_hash = auth_service.hash_password(matched_password)
+            logger.info(f"用户密码哈希已升级: {user.username}")
         
         # 检查用户是否被禁用
         if not user.is_active:

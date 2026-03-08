@@ -30,3 +30,14 @@ class Document(Base):
     share_links = relationship("ShareLink", back_populates="document", cascade="all, delete-orphan")
     query_histories = relationship("QueryHistory", back_populates="document")
 
+
+try:
+    from app.models import share as _share  # noqa: F401
+except Exception:
+    _share = None
+
+try:
+    from app.models import query_history as _query_history  # noqa: F401
+except Exception:
+    _query_history = None
+
