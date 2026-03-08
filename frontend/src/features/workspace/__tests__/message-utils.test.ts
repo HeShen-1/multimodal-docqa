@@ -17,6 +17,11 @@ describe("workspace message utils", () => {
       answer: "这是草稿答案",
       thinking: [{ step: "检索", content: "正在检索文档" }],
       sources: [{ fileName: "demo.pdf", page: 2 }],
+      responseMeta: {
+        modelName: "qwen-local",
+        latencyMs: 128,
+        retrievedChunks: 2,
+      },
       events: [],
       completed: false,
     });
@@ -25,6 +30,7 @@ describe("workspace message utils", () => {
     expect(message?.id).toBe("draft:conv-1");
     expect(message?.role).toBe("assistant");
     expect(message?.sources).toHaveLength(1);
+    expect(message?.responseMeta?.modelName).toBe("qwen-local");
   });
 
   it("summarizes text into a single line", () => {

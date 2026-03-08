@@ -29,6 +29,16 @@ export interface SSEEvent {
   step?: string;
   fileName?: string;
   page?: number;
+  modelName?: string;
+  latencyMs?: number;
+  retrievedChunks?: number;
+  citationCount?: number;
+  fallbackReason?: string | null;
+  retrievalStrategy?: string;
+  rewrittenQuery?: string;
+  topScore?: number;
+  evidenceCoverage?: number;
+  rerankApplied?: boolean;
   [key: string]: unknown;
 }
 

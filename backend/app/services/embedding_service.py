@@ -158,6 +158,10 @@ class EmbeddingService:
                     "chunk_index": chunk.get("chunk_index", idx),
                     "type": chunk.get("type", "text"),
                     "parent_chunk_index": chunk.get("parent_chunk_index", -1),
+                    "source_type": chunk.get("source_type", chunk.get("type", "text")),
+                    "extract_method": chunk.get("extract_method"),
+                    "image_index": chunk.get("image_index"),
+                    "ocr_block_count": chunk.get("ocr_block_count"),
                 }
             )
 
@@ -214,6 +218,8 @@ class EmbeddingService:
                     "chunkIndex": chunk_index,
                     "parentChunkIndex": parent_chunk_index,
                     "type": (metadata or {}).get("type", "text"),
+                    "sourceType": (metadata or {}).get("source_type", (metadata or {}).get("type", "text")),
+                    "extractMethod": (metadata or {}).get("extract_method"),
                     "length": len(text),
                 }
             )

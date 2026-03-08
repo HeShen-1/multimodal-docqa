@@ -124,6 +124,7 @@ def build_preview_text(chunks: List[dict], limit: int = 1600) -> str:
 
 
 def serialize_document_record(document: DocumentDB) -> dict:
+    metadata = document.doc_metadata or {}
     return {
         "id": document.id,
         "fileName": document.file_name,
@@ -134,7 +135,16 @@ def serialize_document_record(document: DocumentDB) -> dict:
         "pageCount": document.page_count,
         "chunkCount": document.chunk_count,
         "imageCount": document.image_count,
-        "metadata": document.doc_metadata or {},
+        "metadata": metadata,
+        "processingSummary": {
+            "extractMethod": metadata.get("extract_method"),
+            "ocrUsed": bool(metadata.get("ocr_used", False)),
+            "pageCount": document.page_count if document.page_count is not None else metadata.get("page_count"),
+            "chunkCount": document.chunk_count if document.chunk_count is not None else metadata.get("chunk_count"),
+            "hasTables": bool(metadata.get("has_tables", False)),
+            "hasImages": bool(metadata.get("has_images", False) or bool(document.image_count)),
+            "sourceType": metadata.get("source_type"),
+        },
         "createdAt": document.created_at,
         "updatedAt": document.updated_at,
     }

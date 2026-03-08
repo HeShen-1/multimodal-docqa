@@ -25,14 +25,16 @@ def _sse(payload: Dict[str, Any]) -> str:
 def _build_sources_data(retrieval_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     sources_data = []
     for result in retrieval_results:
-        metadata = result.get("metadata", {})
+        metadata = result.get("metadata", {}) or {}
         sources_data.append(
             {
-                "document_name": metadata.get("document_id", "unknown"),
-                "page": metadata.get("page", 1),
-                "chunk_id": result.get("id"),
+                "document_name": metadata.get("document_name") or result.get("document_id") or metadata.get("document_id", "unknown"),
+                "page": result.get("page_no") or metadata.get("page", 1),
+                "chunk_id": result.get("chunk_id") or result.get("id"),
                 "content": result.get("content", "")[:200],
-                "score": 1.0 - result.get("distance", 0) if "distance" in result else None,
+                "score": result.get("score"),
+                "rerank_score": result.get("rerank_score"),
+                "source_type": result.get("source_type") or metadata.get("source_type", metadata.get("type", "text")),
             }
         )
     return sources_data
@@ -70,6 +72,53 @@ def _build_grounded_no_answer_payload() -> Dict[str, Any]:
             {"step": "证据筛选", "content": "本次检索未命中相关文档片段，无法形成可验证结论。"},
             {"step": "边界判断", "content": "为降低幻觉风险，返回“未找到依据”的受限回答。"},
         ],
+    }
+
+
+def _resolve_model_name(llm_service: LLMService, requested_model: str | None) -> str:
+    try:
+        resolved = llm_service.resolve_model(requested_model)
+        return getattr(resolved, "model_name", None) or requested_model or "unknown"
+    except Exception:
+        return requested_model or "unknown"
+
+
+def _build_response_meta(
+    llm_service: LLMService,
+    requested_model: str | None,
+    strategy: str,
+    rewritten_query: str,
+    diagnostics: Dict[str, Any],
+    latency_ms: float,
+    citation_count: int,
+) -> Dict[str, Any]:
+    return {
+        "model_name": _resolve_model_name(llm_service, requested_model),
+        "latency_ms": round(latency_ms, 2),
+        "retrieved_chunks": int(diagnostics.get("retrieved_chunks", 0)),
+        "citation_count": citation_count,
+        "fallback_reason": diagnostics.get("fallback_reason"),
+        "retrieval_strategy": strategy,
+        "rewritten_query": rewritten_query,
+        "top_score": diagnostics.get("top_score", 0.0),
+        "evidence_coverage": diagnostics.get("evidence_coverage", 0.0),
+        "rerank_applied": bool(diagnostics.get("rerank_applied", False)),
+    }
+
+
+def _default_retrieval_context(query: str) -> Dict[str, Any]:
+    return {
+        "strategy": "hybrid",
+        "rewritten_query": query,
+        "results": [],
+        "diagnostics": {
+            "retrieved_chunks": 0,
+            "citation_count": 0,
+            "fallback_reason": None,
+            "top_score": 0.0,
+            "evidence_coverage": 0.0,
+            "rerank_applied": False,
+        },
     }
 
 
@@ -115,18 +164,17 @@ class ConversationMessageService:
 
             top_k = getattr(data, "top_k", 5)
             top_k = min(top_k, flags.get("maxRetrievalTopK", top_k))
-
-            retrieval_results = []
+            retrieval_context = _default_retrieval_context(data.content)
             if not flags.get("basicQueryOnly"):
 
                 async def _retrieve():
-                    return await retrieval_service.hybrid_search(
+                    return await retrieval_service.retrieve_context(
                         query=data.content,
                         top_k=top_k,
                         document_ids=conversation.document_ids if conversation.document_ids else None,
                     )
 
-                retrieval_results = await resilience_manager.execute(
+                retrieval_context = await resilience_manager.execute(
                     service_name="retrieval_service",
                     operation_name="conversation_hybrid_search",
                     operation=_retrieve,
@@ -134,22 +182,28 @@ class ConversationMessageService:
                     enable_retry=True,
                 )
 
+            retrieval_results = retrieval_context["results"]
             logger.info(f"检索到 {len(retrieval_results)} 条相关内容")
 
             enable_thinking = getattr(data, "enable_thinking", True) and flags.get("thinkingChainEnabled", True)
             temperature = getattr(data, "temperature", 0.7)
+            no_answer_decision = retrieval_service.should_ground_no_answer(
+                retrieval_results,
+                has_document_scope=_has_document_scope(conversation),
+            )
+            retrieval_context["diagnostics"]["fallback_reason"] = no_answer_decision["reason"]
 
-            if len(retrieval_results) == 0:
-                if _has_document_scope(conversation):
-                    logger.info("未检索到相关文档，返回受限答案")
-                    llm_result = _build_grounded_no_answer_payload()
-                else:
-                    logger.info("未检索到相关文档，切换为通用对话模式")
-                    llm_result = await llm_service.generate_general_answer(
-                        query=data.content,
-                        temperature=temperature,
-                        model=data.model,
-                    )
+            if no_answer_decision["should_ground"]:
+                logger.info(f"检索证据不足，返回受限答案: reason={no_answer_decision['reason']}")
+                llm_result = _build_grounded_no_answer_payload()
+                sources_data = []
+            elif len(retrieval_results) == 0:
+                logger.info("未检索到相关文档，切换为通用对话模式")
+                llm_result = await llm_service.generate_general_answer(
+                    query=data.content,
+                    temperature=temperature,
+                    model=data.model,
+                )
                 sources_data = []
             else:
                 llm_result = await llm_service.generate_answer(
@@ -167,8 +221,17 @@ class ConversationMessageService:
                 if len(original_answer) > 500:
                     llm_result["answer"] = original_answer[:500] + "\n\n[系统降级中，返回简化内容]"
 
-            processing_time = time.time() - start_time
-            logger.info(f"消息处理完成，耗时: {processing_time:.2f}s")
+            processing_time_ms = (time.time() - start_time) * 1000
+            response_meta = _build_response_meta(
+                llm_service=llm_service,
+                requested_model=data.model,
+                strategy=retrieval_context["strategy"],
+                rewritten_query=retrieval_context["rewritten_query"],
+                diagnostics=retrieval_context["diagnostics"],
+                latency_ms=processing_time_ms,
+                citation_count=len(sources_data),
+            )
+            logger.info(f"消息处理完成，耗时: {processing_time_ms:.2f}ms")
 
             assistant_message = await ConversationService.add_message(
                 db=db,
@@ -178,6 +241,7 @@ class ConversationMessageService:
                 content=llm_result["answer"],
                 thinking=llm_result.get("thinking") if enable_thinking else None,
                 sources=sources_data,
+                extra_data=response_meta,
             )
 
             return {
@@ -202,6 +266,7 @@ class ConversationMessageService:
         degradation = resilience_manager.evaluate_degradation()
         flags = degradation.get("flags", {})
         slot_acquired = False
+        start_time = time.time()
 
         try:
             slot_acquired = resilience_manager.degradation.try_acquire_query_slot()
@@ -228,18 +293,17 @@ class ConversationMessageService:
 
             top_k = getattr(data, "top_k", 5)
             top_k = min(top_k, flags.get("maxRetrievalTopK", top_k))
-
-            retrieval_results = []
+            retrieval_context = _default_retrieval_context(data.content)
             if not flags.get("basicQueryOnly"):
 
                 async def _retrieve():
-                    return await retrieval_service.hybrid_search(
+                    return await retrieval_service.retrieve_context(
                         query=data.content,
                         top_k=top_k,
                         document_ids=conversation.document_ids if conversation.document_ids else None,
                     )
 
-                retrieval_results = await resilience_manager.execute(
+                retrieval_context = await resilience_manager.execute(
                     service_name="retrieval_service",
                     operation_name="conversation_stream_hybrid_search",
                     operation=_retrieve,
@@ -247,11 +311,18 @@ class ConversationMessageService:
                     enable_retry=True,
                 )
 
+            retrieval_results = retrieval_context["results"]
             yield _sse({"type": "status", "content": f"检索到 {len(retrieval_results)} 条相关内容"})
 
             enable_thinking = getattr(data, "enable_thinking", True) and flags.get("thinkingChainEnabled", True)
             temperature = getattr(data, "temperature", 0.7)
-            sources_data = _build_sources_data(retrieval_results)
+            no_answer_decision = retrieval_service.should_ground_no_answer(
+                retrieval_results,
+                has_document_scope=_has_document_scope(conversation),
+            )
+            retrieval_context["diagnostics"]["fallback_reason"] = no_answer_decision["reason"]
+
+            sources_data = _build_sources_data(retrieval_results) if not no_answer_decision["should_ground"] else []
             for source in sources_data:
                 yield _sse(
                     {
@@ -259,32 +330,34 @@ class ConversationMessageService:
                         "fileName": source["document_name"],
                         "page": source["page"],
                         "content": source["content"],
+                        "score": source["score"],
+                        "rerank_score": source["rerank_score"],
+                        "source_type": source["source_type"],
                     }
                 )
 
             full_answer = ""
             thinking_data = []
 
-            if len(retrieval_results) == 0:
-                if _has_document_scope(conversation):
-                    logger.info("流式查询：未检索到相关文档，返回受限答案")
-                    grounded_payload = _build_grounded_no_answer_payload()
-                    thinking_data = grounded_payload["thinking"] if enable_thinking else []
-                    for step in thinking_data:
-                        yield _sse({"type": "thinking", "step": step["step"], "content": step["content"]})
-                    full_answer = grounded_payload["answer"]
-                    yield _sse({"type": "answer", "content": full_answer})
-                else:
-                    logger.info("流式查询：未检索到相关文档，使用通用对话流式模式")
-                    stream = await llm_service.generate_general_answer(
-                        query=data.content,
-                        temperature=temperature,
-                        stream=True,
-                        model=data.model,
-                    )
-                    async for token in stream:
-                        full_answer += token
-                        yield _sse({"type": "answer", "content": token})
+            if no_answer_decision["should_ground"]:
+                logger.info(f"流式查询：证据不足，返回受限答案: reason={no_answer_decision['reason']}")
+                grounded_payload = _build_grounded_no_answer_payload()
+                thinking_data = grounded_payload["thinking"] if enable_thinking else []
+                for step in thinking_data:
+                    yield _sse({"type": "thinking", "step": step["step"], "content": step["content"]})
+                full_answer = grounded_payload["answer"]
+                yield _sse({"type": "answer", "content": full_answer})
+            elif len(retrieval_results) == 0:
+                logger.info("流式查询：未检索到相关文档，使用通用对话流式模式")
+                stream = await llm_service.generate_general_answer(
+                    query=data.content,
+                    temperature=temperature,
+                    stream=True,
+                    model=data.model,
+                )
+                async for token in stream:
+                    full_answer += token
+                    yield _sse({"type": "answer", "content": token})
             else:
                 logger.info("流式查询：基于文档生成答案（流式模式）")
                 stream = await llm_service.generate_answer(
@@ -410,6 +483,16 @@ class ConversationMessageService:
                 full_answer = "抱歉，我暂时无法生成有效回答，请稍后重试。"
                 yield _sse({"type": "answer", "content": full_answer})
 
+            response_meta = _build_response_meta(
+                llm_service=llm_service,
+                requested_model=data.model,
+                strategy=retrieval_context["strategy"],
+                rewritten_query=retrieval_context["rewritten_query"],
+                diagnostics=retrieval_context["diagnostics"],
+                latency_ms=(time.time() - start_time) * 1000,
+                citation_count=len(sources_data),
+            )
+
             await ConversationService.add_message(
                 db=db,
                 conversation_id=conversation_id,
@@ -418,9 +501,10 @@ class ConversationMessageService:
                 content=full_answer,
                 thinking=thinking_data if thinking_data else None,
                 sources=sources_data,
+                extra_data=response_meta,
             )
 
-            yield _sse({"type": "done"})
+            yield _sse({"type": "done", **response_meta})
         except Exception as exc:
             logger.error(f"流式查询失败: {exc}")
             yield _sse({"type": "error", "content": f"查询失败: {str(exc)}"})

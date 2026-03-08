@@ -138,7 +138,8 @@ class ConversationService:
         role: str,
         content: str,
         thinking: Optional[Dict[str, Any]] = None,
-        sources: Optional[List[Dict[str, Any]]] = None
+        sources: Optional[List[Dict[str, Any]]] = None,
+        extra_data: Optional[Dict[str, Any]] = None,
     ) -> Message:
         """
         添加消息到对话
@@ -151,6 +152,7 @@ class ConversationService:
             content: 消息内容
             thinking: 思考过程（可选）
             sources: 引用来源（可选）
+            extra_data: 扩展元数据（可选）
             
         Returns:
             创建的消息对象
@@ -173,7 +175,7 @@ class ConversationService:
             content=content,
             thinking=thinking,
             sources=sources,
-            extra_data={}
+            extra_data=extra_data or {},
         )
         
         db.add(message)

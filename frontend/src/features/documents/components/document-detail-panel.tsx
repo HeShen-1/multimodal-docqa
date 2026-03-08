@@ -25,6 +25,7 @@ export function DocumentDetailPanel({ state }: { state: DocumentsPageState }) {
     statusDetail,
     textPreview,
   } = state;
+  const processingSummary = detailQuery.data?.processingSummary ?? selectedDocument?.processingSummary ?? null;
 
   return (
     <Card className="flex min-h-[calc(100vh-7rem)] flex-col overflow-hidden">
@@ -65,11 +66,15 @@ export function DocumentDetailPanel({ state }: { state: DocumentsPageState }) {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <div className="rounded-2xl border border-border bg-black/10 p-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">页数</p>
-              <p className="mt-2 text-lg font-semibold text-foreground">{selectedDocument.pageCount ?? 0}</p>
+              <p className="mt-2 text-lg font-semibold text-foreground">
+                {processingSummary?.pageCount ?? selectedDocument.pageCount ?? 0}
+              </p>
             </div>
             <div className="rounded-2xl border border-border bg-black/10 p-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">切块</p>
-              <p className="mt-2 text-lg font-semibold text-foreground">{selectedDocument.chunkCount ?? 0}</p>
+              <p className="mt-2 text-lg font-semibold text-foreground">
+                {processingSummary?.chunkCount ?? selectedDocument.chunkCount ?? 0}
+              </p>
             </div>
             <div className="rounded-2xl border border-border bg-black/10 p-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">图片</p>
@@ -78,6 +83,27 @@ export function DocumentDetailPanel({ state }: { state: DocumentsPageState }) {
             <div className="rounded-2xl border border-border bg-black/10 p-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">扩展名</p>
               <p className="mt-2 text-lg font-semibold text-foreground">{getFileExtension(selectedDocument.fileName) || "-"}</p>
+            </div>
+          </div>
+        ) : null}
+
+        {selectedDocument ? (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="rounded-2xl border border-border bg-black/10 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">提取方式</p>
+              <p className="mt-2 text-sm font-semibold text-foreground">{processingSummary?.extractMethod ?? "未记录"}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-black/10 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">OCR</p>
+              <p className="mt-2 text-sm font-semibold text-foreground">{processingSummary?.ocrUsed ? "已启用" : "未启用"}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-black/10 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">表格</p>
+              <p className="mt-2 text-sm font-semibold text-foreground">{processingSummary?.hasTables ? "包含" : "无"}</p>
+            </div>
+            <div className="rounded-2xl border border-border bg-black/10 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">来源类型</p>
+              <p className="mt-2 text-sm font-semibold text-foreground">{processingSummary?.sourceType ?? "text"}</p>
             </div>
           </div>
         ) : null}

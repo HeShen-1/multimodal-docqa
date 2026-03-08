@@ -26,6 +26,7 @@ export function buildDraftMessage(conversationId: string, snapshot: StreamSnapsh
     content: snapshot.error || snapshot.answer || (snapshot.thinking.length ? "正在整理答案…" : "正在思考…"),
     thinking: snapshot.thinking,
     sources: snapshot.sources,
+    responseMeta: snapshot.responseMeta ?? null,
     createdAt: new Date().toISOString(),
   };
 }

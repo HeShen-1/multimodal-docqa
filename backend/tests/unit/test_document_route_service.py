@@ -18,7 +18,14 @@ def _build_document(status=DocumentStatus.COMPLETED):
         page_count=5,
         chunk_count=8,
         image_count=1,
-        doc_metadata={"source": "unit-test"},
+        doc_metadata={
+            "source": "unit-test",
+            "extract_method": "pdf_text_and_ocr",
+            "ocr_used": True,
+            "has_tables": False,
+            "has_images": True,
+            "source_type": "mixed",
+        },
         created_at=datetime(2026, 3, 1, 10, 0, 0),
         updated_at=datetime(2026, 3, 1, 10, 5, 0),
     )
@@ -31,7 +38,16 @@ def test_serialize_document_record_uses_db_fields():
     assert payload["fileName"] == "demo.pdf"
     assert payload["fileType"] == ".pdf"
     assert payload["chunkCount"] == 8
-    assert payload["metadata"] == {"source": "unit-test"}
+    assert payload["metadata"]["source"] == "unit-test"
+    assert payload["processingSummary"] == {
+        "extractMethod": "pdf_text_and_ocr",
+        "ocrUsed": True,
+        "pageCount": 5,
+        "chunkCount": 8,
+        "hasTables": False,
+        "hasImages": True,
+        "sourceType": "mixed",
+    }
 
 
 def test_build_document_status_payload_prefers_transient_progress(monkeypatch):

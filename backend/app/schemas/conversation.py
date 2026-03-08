@@ -34,6 +34,7 @@ class MessageResponse(BaseModel):
     content: str
     thinking: Optional[List[Dict[str, Any]]] = None
     sources: Optional[List[Dict[str, Any]]] = None
+    extra_data: Optional[Dict[str, Any]] = None
     created_at: datetime
 
     @field_serializer("created_at")

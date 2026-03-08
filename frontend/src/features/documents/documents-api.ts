@@ -15,6 +15,7 @@ import type { Tag } from "@/shared/types/tag";
 type AnyRecord = Record<string, unknown>;
 
 function normalizeDocument(raw: AnyRecord): DocumentItem {
+  const processingSummaryRaw = (raw.processingSummary ?? raw.processing_summary) as AnyRecord | undefined;
   return {
     id: String(raw.id ?? raw.documentId ?? ""),
     fileName: String(raw.fileName ?? raw.file_name ?? "未知文件"),
@@ -25,16 +26,39 @@ function normalizeDocument(raw: AnyRecord): DocumentItem {
     pageCount: Number(raw.pageCount ?? raw.page_count ?? 0),
     chunkCount: Number(raw.chunkCount ?? raw.chunk_count ?? 0),
     imageCount: Number(raw.imageCount ?? raw.image_count ?? 0),
+    processingSummary: processingSummaryRaw
+      ? {
+          extractMethod: (processingSummaryRaw.extractMethod ?? processingSummaryRaw.extract_method) as string | undefined,
+          ocrUsed: Boolean(processingSummaryRaw.ocrUsed ?? processingSummaryRaw.ocr_used),
+          pageCount: Number(processingSummaryRaw.pageCount ?? processingSummaryRaw.page_count ?? 0) || undefined,
+          chunkCount: Number(processingSummaryRaw.chunkCount ?? processingSummaryRaw.chunk_count ?? 0) || undefined,
+          hasTables: Boolean(processingSummaryRaw.hasTables ?? processingSummaryRaw.has_tables),
+          hasImages: Boolean(processingSummaryRaw.hasImages ?? processingSummaryRaw.has_images),
+          sourceType: (processingSummaryRaw.sourceType ?? processingSummaryRaw.source_type) as string | undefined,
+        }
+      : null,
     createdAt: (raw.createdAt ?? raw.created_at) as string | number | undefined,
     updatedAt: (raw.updatedAt ?? raw.updated_at) as string | number | undefined,
   };
 }
 
 function normalizeDocumentDetail(raw: AnyRecord): DocumentDetail {
+  const processingSummaryRaw = (raw.processingSummary ?? raw.processing_summary) as AnyRecord | undefined;
   return {
     ...normalizeDocument(raw),
     metadata: (raw.metadata as Record<string, unknown> | undefined) ?? {},
     previewText: (raw.previewText ?? raw.preview_text) as string | null | undefined,
+    processingSummary: processingSummaryRaw
+      ? {
+          extractMethod: (processingSummaryRaw.extractMethod ?? processingSummaryRaw.extract_method) as string | undefined,
+          ocrUsed: Boolean(processingSummaryRaw.ocrUsed ?? processingSummaryRaw.ocr_used),
+          pageCount: Number(processingSummaryRaw.pageCount ?? processingSummaryRaw.page_count ?? 0) || undefined,
+          chunkCount: Number(processingSummaryRaw.chunkCount ?? processingSummaryRaw.chunk_count ?? 0) || undefined,
+          hasTables: Boolean(processingSummaryRaw.hasTables ?? processingSummaryRaw.has_tables),
+          hasImages: Boolean(processingSummaryRaw.hasImages ?? processingSummaryRaw.has_images),
+          sourceType: (processingSummaryRaw.sourceType ?? processingSummaryRaw.source_type) as string | undefined,
+        }
+      : null,
   };
 }
 

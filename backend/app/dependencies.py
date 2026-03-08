@@ -110,14 +110,15 @@ def get_embedding_service(
 
 
 def get_retrieval_service(
-    embedding_service: EmbeddingService = Depends(get_embedding_service)
+    embedding_service: EmbeddingService = Depends(get_embedding_service),
+    settings: Settings = Depends(get_settings),
 ) -> RetrievalService:
     """获取检索服务"""
     global _retrieval_service
     if _retrieval_service is None:
         from app.services.retrieval_service import RetrievalService
 
-        _retrieval_service = RetrievalService(embedding_service)
+        _retrieval_service = RetrievalService(embedding_service=embedding_service, settings_obj=settings)
     return _retrieval_service
 
 

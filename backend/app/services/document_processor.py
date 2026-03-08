@@ -85,6 +85,7 @@ class DocumentProcessor:
         text_chunks: List[Dict[str, Any]] = []
         images: List[Dict[str, Any]] = []
         parent_chunk_offset = 0
+        ocr_used = False
 
         with fitz.open(file_path) as doc:
             page_count = len(doc)
@@ -102,6 +103,10 @@ class DocumentProcessor:
                     chunk_type="text",
                     chunk_index_offset=len(text_chunks),
                     parent_chunk_offset=parent_chunk_offset,
+                    metadata_overrides={
+                        "source_type": "text",
+                        "extract_method": "pdf_text",
+                    },
                 )
                 text_chunks.extend(page_chunks)
                 parent_chunk_offset += parent_count
@@ -111,14 +116,22 @@ class DocumentProcessor:
                         xref = image[0]
                         base_image = doc.extract_image(xref)
                         image_bytes = base_image["image"]
-                        ocr_text = await self._ocr_image(image_bytes)
+                        ocr_payload = await self._ocr_image(image_bytes)
+                        ocr_text = ocr_payload["text"]
                         if ocr_text.strip():
+                            ocr_used = True
                             ocr_chunks, ocr_parent_count = self._build_chunks(
                                 text=ocr_text,
                                 page=page_index + 1,
                                 chunk_type="ocr",
                                 chunk_index_offset=len(text_chunks),
                                 parent_chunk_offset=parent_chunk_offset,
+                                metadata_overrides={
+                                    "source_type": "ocr",
+                                    "extract_method": "ocr",
+                                    "image_index": image_index,
+                                    "ocr_block_count": len(ocr_payload["blocks"]),
+                                },
                             )
                             text_chunks.extend(ocr_chunks)
                             parent_chunk_offset += ocr_parent_count
@@ -127,6 +140,7 @@ class DocumentProcessor:
                                 "page": page_index + 1,
                                 "image_index": image_index,
                                 "ocr_text": ocr_text,
+                                "ocr_blocks": ocr_payload["blocks"],
                             }
                         )
                     except Exception as exc:
@@ -137,17 +151,23 @@ class DocumentProcessor:
             "text_chunks": text_chunks,
             "images": images,
             "page_count": page_count,
-            "metadata": {
-                "chunk_count": len(text_chunks),
-                "image_count": len(images),
-                "parent_chunk_count": parent_chunk_offset,
-            },
+            "metadata": self._build_processing_metadata(
+                chunk_count=len(text_chunks),
+                image_count=len(images),
+                parent_chunk_count=parent_chunk_offset,
+                page_count=page_count,
+                extract_method="pdf_text_and_ocr" if ocr_used else "pdf_text",
+                ocr_used=ocr_used,
+                has_tables=False,
+                source_type="mixed" if ocr_used else "text",
+            ),
         }
 
     async def _process_docx(self, file_path: Path) -> Dict[str, Any]:
         text_chunks: List[Dict[str, Any]] = []
         images: List[Dict[str, Any]] = []
         parent_chunk_offset = 0
+        ocr_used = False
 
         doc = DocxDocument(file_path)
         paragraphs = [paragraph.text.strip() for paragraph in doc.paragraphs if paragraph.text.strip()]
@@ -158,6 +178,10 @@ class DocumentProcessor:
             chunk_type="text",
             chunk_index_offset=0,
             parent_chunk_offset=parent_chunk_offset,
+            metadata_overrides={
+                "source_type": "text",
+                "extract_method": "structured_text",
+            },
         )
         text_chunks.extend(body_chunks)
         parent_chunk_offset += parent_count
@@ -167,14 +191,22 @@ class DocumentProcessor:
                 continue
             try:
                 image_data = relation.target_part.blob
-                ocr_text = await self._ocr_image(image_data)
+                ocr_payload = await self._ocr_image(image_data)
+                ocr_text = ocr_payload["text"]
                 if ocr_text.strip():
+                    ocr_used = True
                     ocr_chunks, ocr_parent_count = self._build_chunks(
                         text=ocr_text,
                         page=1,
                         chunk_type="ocr",
                         chunk_index_offset=len(text_chunks),
                         parent_chunk_offset=parent_chunk_offset,
+                        metadata_overrides={
+                            "source_type": "ocr",
+                            "extract_method": "ocr",
+                            "image_index": image_index,
+                            "ocr_block_count": len(ocr_payload["blocks"]),
+                        },
                     )
                     text_chunks.extend(ocr_chunks)
                     parent_chunk_offset += ocr_parent_count
@@ -183,6 +215,7 @@ class DocumentProcessor:
                         "page": 1,
                         "image_index": image_index,
                         "ocr_text": ocr_text,
+                        "ocr_blocks": ocr_payload["blocks"],
                     }
                 )
             except Exception as exc:
@@ -193,25 +226,56 @@ class DocumentProcessor:
             "text_chunks": text_chunks,
             "images": images,
             "page_count": 1,
-            "metadata": {
-                "chunk_count": len(text_chunks),
-                "image_count": len(images),
-                "parent_chunk_count": parent_chunk_offset,
-            },
+            "metadata": self._build_processing_metadata(
+                chunk_count=len(text_chunks),
+                image_count=len(images),
+                parent_chunk_count=parent_chunk_offset,
+                page_count=1,
+                extract_method="structured_text_and_ocr" if ocr_used else "structured_text",
+                ocr_used=ocr_used,
+                has_tables=False,
+                source_type="mixed" if ocr_used else "text",
+            ),
         }
 
     async def _process_plain_text(self, file_path: Path) -> Dict[str, Any]:
         content = self._read_text_file(file_path)
-        return self._build_text_result(content, file_path.suffix.upper().lstrip("."))
+        return self._build_text_result(
+            content,
+            file_kind=file_path.suffix.upper().lstrip("."),
+            extract_method="structured_text" if file_path.suffix.lower() == ".md" else "plain_text",
+            source_type="text",
+            chunk_type="text",
+            has_tables=False,
+        )
 
     async def _process_csv(self, file_path: Path) -> Dict[str, Any]:
         delimiter = "\t" if file_path.suffix.lower() == ".tsv" else ","
         rows: List[str] = []
+        headers: List[str] = []
         with file_path.open("r", encoding="utf-8", newline="") as handle:
             reader = csv.reader(handle, delimiter=delimiter)
-            for row in reader:
-                rows.append(" | ".join(cell.strip() for cell in row if cell.strip()))
-        return self._build_text_result("\n".join(row for row in rows if row), "CSV")
+            for row_index, row in enumerate(reader):
+                cleaned = [cell.strip() for cell in row]
+                if row_index == 0:
+                    headers = [cell for cell in cleaned if cell]
+                    if headers:
+                        rows.append(f"[表头] {' | '.join(headers)}")
+                    continue
+                if headers:
+                    pairs = [f"{header}: {value}" for header, value in zip(headers, cleaned) if header and value]
+                    if pairs:
+                        rows.append(" | ".join(pairs))
+                else:
+                    rows.append(" | ".join(cell for cell in cleaned if cell))
+        return self._build_text_result(
+            "\n".join(row for row in rows if row),
+            file_kind="CSV",
+            extract_method="table_parse",
+            source_type="table",
+            chunk_type="table",
+            has_tables=True,
+        )
 
     async def _process_json(self, file_path: Path) -> Dict[str, Any]:
         raw = self._read_text_file(file_path)
@@ -221,7 +285,14 @@ class DocumentProcessor:
         else:
             parsed = json.loads(raw)
             normalized = json.dumps(parsed, ensure_ascii=False, indent=2)
-        return self._build_text_result(normalized, "JSON")
+        return self._build_text_result(
+            normalized,
+            file_kind="JSON",
+            extract_method="structured_text",
+            source_type="text",
+            chunk_type="text",
+            has_tables=False,
+        )
 
     async def _process_html(self, file_path: Path) -> Dict[str, Any]:
         content = self._read_text_file(file_path)
@@ -231,7 +302,14 @@ class DocumentProcessor:
         if not normalized:
             normalized = re.sub(r"<[^>]+>", " ", content)
             normalized = re.sub(r"\s+", " ", normalized).strip()
-        return self._build_text_result(normalized, "HTML")
+        return self._build_text_result(
+            normalized,
+            file_kind="HTML",
+            extract_method="structured_text",
+            source_type="text",
+            chunk_type="text",
+            has_tables=False,
+        )
 
     async def _process_xml(self, file_path: Path) -> Dict[str, Any]:
         content = self._read_text_file(file_path)
@@ -240,7 +318,14 @@ class DocumentProcessor:
             normalized = "\n".join(text.strip() for text in root.itertext() if text and text.strip())
         except ET.ParseError:
             normalized = content
-        return self._build_text_result(normalized, "XML")
+        return self._build_text_result(
+            normalized,
+            file_kind="XML",
+            extract_method="structured_text",
+            source_type="text",
+            chunk_type="text",
+            has_tables=False,
+        )
 
     def _read_text_file(self, file_path: Path) -> str:
         for encoding in ["utf-8", "utf-8-sig", "gb18030", "latin-1"]:
@@ -250,18 +335,39 @@ class DocumentProcessor:
                 continue
         raise ValueError("文本文件读取失败")
 
-    def _build_text_result(self, content: str, file_kind: str) -> Dict[str, Any]:
-        text_chunks, parent_count = self._build_chunks(text=content, page=1, chunk_type="text")
+    def _build_text_result(
+        self,
+        content: str,
+        file_kind: str,
+        extract_method: str,
+        source_type: str,
+        chunk_type: str,
+        has_tables: bool,
+    ) -> Dict[str, Any]:
+        text_chunks, parent_count = self._build_chunks(
+            text=content,
+            page=1,
+            chunk_type=chunk_type,
+            metadata_overrides={
+                "source_type": source_type,
+                "extract_method": extract_method,
+            },
+        )
         logger.info(f"{file_kind} 处理完成: {len(text_chunks)} 个文本块")
         return {
             "text_chunks": text_chunks,
             "images": [],
             "page_count": 1,
-            "metadata": {
-                "chunk_count": len(text_chunks),
-                "image_count": 0,
-                "parent_chunk_count": parent_count,
-            },
+            "metadata": self._build_processing_metadata(
+                chunk_count=len(text_chunks),
+                image_count=0,
+                parent_chunk_count=parent_count,
+                page_count=1,
+                extract_method=extract_method,
+                ocr_used=False,
+                has_tables=has_tables,
+                source_type=source_type,
+            ),
         }
 
     def _build_chunks(
@@ -271,6 +377,7 @@ class DocumentProcessor:
         chunk_type: str,
         chunk_index_offset: int = 0,
         parent_chunk_offset: int = 0,
+        metadata_overrides: Dict[str, Any] | None = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         normalized = self._normalize_text(text)
         if not normalized:
@@ -299,11 +406,45 @@ class DocumentProcessor:
                         "chunk_index": next_chunk_index,
                         "type": chunk_type,
                         "parent_chunk_index": parent_chunk_index,
+                        **(metadata_overrides or {}),
                     }
                 )
                 next_chunk_index += 1
 
         return results, len(parent_chunks)
+
+    def _build_processing_metadata(
+        self,
+        chunk_count: int,
+        image_count: int,
+        parent_chunk_count: int,
+        page_count: int,
+        extract_method: str,
+        ocr_used: bool,
+        has_tables: bool,
+        source_type: str,
+    ) -> Dict[str, Any]:
+        metadata = {
+            "chunk_count": chunk_count,
+            "image_count": image_count,
+            "parent_chunk_count": parent_chunk_count,
+            "page_count": page_count,
+            "extract_method": extract_method,
+            "ocr_used": ocr_used,
+            "has_tables": has_tables,
+            "has_images": image_count > 0,
+            "source_type": source_type,
+        }
+        metadata["processing_summary"] = {
+            "extract_method": extract_method,
+            "ocr_used": ocr_used,
+            "page_count": page_count,
+            "chunk_count": chunk_count,
+            "has_tables": has_tables,
+            "has_images": image_count > 0,
+            "source_type": source_type,
+        }
+        return metadata
 
     def _chunk_text(
         self,
@@ -511,22 +652,34 @@ class DocumentProcessor:
         ]
         return "\n".join(filtered_lines)
 
-    async def _ocr_image(self, image_bytes: bytes) -> str:
+    async def _ocr_image(self, image_bytes: bytes) -> Dict[str, Any]:
         try:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, self._run_ocr, image_bytes)
         except Exception as exc:
             logger.warning(f"OCR 识别失败: {exc}")
-            return ""
+            return {"text": "", "blocks": []}
 
-    def _run_ocr(self, image_bytes: bytes) -> str:
+    def _run_ocr(self, image_bytes: bytes) -> Dict[str, Any]:
         try:
             Image.open(io.BytesIO(image_bytes))
             result = self.ocr.ocr(image_bytes, cls=True)
             if result and result[0]:
-                texts = [line[1][0] for line in result[0]]
-                return " ".join(texts)
-            return ""
+                blocks = []
+                for index, line in enumerate(result[0]):
+                    bbox = line[0] if len(line) > 0 else []
+                    payload = line[1] if len(line) > 1 else ("", 0.0)
+                    blocks.append(
+                        {
+                            "index": index,
+                            "text": payload[0],
+                            "confidence": float(payload[1]) if len(payload) > 1 else 0.0,
+                            "bbox": bbox,
+                        }
+                    )
+                texts = [block["text"] for block in blocks if block["text"]]
+                return {"text": " ".join(texts), "blocks": blocks}
+            return {"text": "", "blocks": []}
         except Exception as exc:
             logger.warning(f"OCR 处理失败: {exc}")
-            return ""
+            return {"text": "", "blocks": []}

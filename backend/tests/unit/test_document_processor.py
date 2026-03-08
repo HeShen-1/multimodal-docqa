@@ -53,6 +53,13 @@ async def test_process_csv(processor, tmp_path):
     result = await processor.process_document(file_path)
     assert result["metadata"]["chunk_count"] > 0
     assert result["metadata"]["image_count"] == 0
+    assert result["metadata"]["extract_method"] == "table_parse"
+    assert result["metadata"]["source_type"] == "table"
+    assert result["metadata"]["has_tables"] is True
+    assert result["metadata"]["ocr_used"] is False
+    assert result["metadata"]["processing_summary"]["chunk_count"] == result["metadata"]["chunk_count"]
+    assert all(chunk["type"] == "table" for chunk in result["text_chunks"])
+    assert "name: alice" in result["text_chunks"][0]["content"]
 
 
 @pytest.mark.asyncio
@@ -62,6 +69,8 @@ async def test_process_json(processor, tmp_path):
     result = await processor.process_document(file_path)
     assert result["metadata"]["chunk_count"] > 0
     assert result["metadata"]["image_count"] == 0
+    assert result["metadata"]["extract_method"] == "structured_text"
+    assert result["metadata"]["processing_summary"]["extract_method"] == "structured_text"
 
 
 @pytest.mark.asyncio
@@ -71,4 +80,5 @@ async def test_process_html(processor, tmp_path):
     result = await processor.process_document(file_path)
     assert result["metadata"]["chunk_count"] > 0
     assert result["metadata"]["image_count"] == 0
+    assert result["metadata"]["processing_summary"]["source_type"] == "text"
 

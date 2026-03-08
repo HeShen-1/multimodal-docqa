@@ -1,0 +1,22 @@
+[
+  {
+    "experiment": "Baseline",
+    "results": "scripts/evaluation/results/baseline.json"
+  },
+  {
+    "experiment": "Hybrid",
+    "results": "scripts/evaluation/results/hybrid.json"
+  },
+  {
+    "experiment": "Hybrid + Reranker",
+    "results": "scripts/evaluation/results/hybrid_reranker.json"
+  },
+  {
+    "experiment": "Hybrid + Reranker + Prompt优化",
+    "results": "scripts/evaluation/results/hybrid_reranker_prompt.json"
+  },
+  {
+    "experiment": "轻量微调版",
+    "results": "scripts/evaluation/results/qlora.json"
+  }
+]

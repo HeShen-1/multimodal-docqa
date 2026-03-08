@@ -11,6 +11,7 @@ function createSnapshot(
     answer: snapshot?.answer ?? "",
     thinking: snapshot?.thinking ?? [],
     sources: snapshot?.sources ?? [],
+    responseMeta: snapshot?.responseMeta ?? null,
     events: snapshot?.events ?? [],
     completed: snapshot?.completed ?? false,
     error: snapshot?.error,

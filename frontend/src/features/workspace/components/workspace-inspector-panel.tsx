@@ -41,6 +41,44 @@ export function WorkspaceInspectorPanel({ state }: { state: WorkspacePageState }
             </div>
 
             <div className="space-y-2">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Response Meta</p>
+              {selectedAssistantMessage.responseMeta ? (
+                <div className="rounded-xl border border-border bg-black/20 p-3 text-muted-foreground">
+                  <div className="flex flex-wrap gap-2">
+                    {selectedAssistantMessage.responseMeta.modelName ? (
+                      <Badge variant="secondary">{selectedAssistantMessage.responseMeta.modelName}</Badge>
+                    ) : null}
+                    {selectedAssistantMessage.responseMeta.retrievalStrategy ? (
+                      <Badge variant="secondary">{selectedAssistantMessage.responseMeta.retrievalStrategy}</Badge>
+                    ) : null}
+                    {selectedAssistantMessage.responseMeta.rerankApplied ? <Badge variant="secondary">Rerank</Badge> : null}
+                  </div>
+                  <p className="mt-2 leading-6">
+                    {(selectedAssistantMessage.responseMeta.latencyMs ?? 0) > 0
+                      ? `耗时 ${Math.round(selectedAssistantMessage.responseMeta.latencyMs ?? 0)} ms`
+                      : "耗时未记录"}
+                    {" · "}
+                    命中 {selectedAssistantMessage.responseMeta.retrievedChunks ?? 0} 段
+                    {" · "}
+                    引用 {selectedAssistantMessage.responseMeta.citationCount ?? 0} 条
+                  </p>
+                  {selectedAssistantMessage.responseMeta.rewrittenQuery ? (
+                    <p className="mt-2 leading-6">改写查询：{selectedAssistantMessage.responseMeta.rewrittenQuery}</p>
+                  ) : null}
+                  {selectedAssistantMessage.responseMeta.fallbackReason ? (
+                    <p className="mt-2 leading-6 text-amber-300">
+                      兜底原因：{selectedAssistantMessage.responseMeta.fallbackReason}
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-border bg-black/10 p-3 text-muted-foreground">
+                  当前这轮回复没有记录响应元数据。
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Thinking</p>
               {(selectedAssistantMessage.thinking ?? []).length ? (
                 (selectedAssistantMessage.thinking ?? []).map((step, index) => (

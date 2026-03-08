@@ -2,6 +2,16 @@ import type { Pagination } from "@/shared/types/api";
 
 export type DocumentStatus = "processing" | "completed" | "failed" | "PROCESSING" | "COMPLETED" | "FAILED";
 
+export interface DocumentProcessingSummary {
+  extractMethod?: string;
+  ocrUsed?: boolean;
+  pageCount?: number;
+  chunkCount?: number;
+  hasTables?: boolean;
+  hasImages?: boolean;
+  sourceType?: string;
+}
+
 export interface DocumentItem {
   id: string;
   fileName: string;
@@ -12,6 +22,7 @@ export interface DocumentItem {
   pageCount?: number | null;
   chunkCount?: number | null;
   imageCount?: number | null;
+  processingSummary?: DocumentProcessingSummary | null;
   createdAt?: string | number;
   updatedAt?: string | number;
 }
@@ -19,6 +30,7 @@ export interface DocumentItem {
 export interface DocumentDetail extends DocumentItem {
   metadata?: Record<string, unknown>;
   previewText?: string | null;
+  processingSummary?: DocumentProcessingSummary | null;
 }
 
 export interface DocumentChunk {

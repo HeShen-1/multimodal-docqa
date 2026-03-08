@@ -65,6 +65,14 @@
 - `POST /api/v1/conversations/{conversation_id}/messages/stream`
 - 两个接口均新增可选字段 `model`，支持传入 `deepseek` 或 `qwen3-vl:2b-thinking-q4_K_M`
 - 当用户当前已处于“最新空白会话”时，后端会复用该会话，避免重复创建草稿会话
+- 流式 SSE 的 `done` 事件现额外返回：
+  - `model_name`
+  - `latency_ms`
+  - `retrieved_chunks`
+  - `citation_count`
+  - `fallback_reason`
+  - `retrieval_strategy`
+  - `rewritten_query`
 
 ## 6. Documents
 
@@ -85,6 +93,14 @@
 
 补充说明：
 - `GET /api/v1/documents/{document_id}` 现额外返回 `previewText`，用于文档文本预览
+- `GET /api/v1/documents/{document_id}` / `GET /api/v1/documents` 现额外返回 `processingSummary`：
+  - `extractMethod`
+  - `ocrUsed`
+  - `pageCount`
+  - `chunkCount`
+  - `hasTables`
+  - `hasImages`
+  - `sourceType`
 - `GET /api/v1/documents/{document_id}/chunks` 返回按页码与切块序号排序后的文本块
 - `GET /api/v1/documents/{document_id}/file` 可用于前端打开原始文件预览
 

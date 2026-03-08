@@ -1,5 +1,18 @@
 import type { SSEEvent } from "@/shared/types/api";
 
+export interface ResponseMeta {
+  modelName?: string;
+  latencyMs?: number;
+  retrievedChunks?: number;
+  citationCount?: number;
+  fallbackReason?: string | null;
+  retrievalStrategy?: string;
+  rewrittenQuery?: string;
+  topScore?: number;
+  evidenceCoverage?: number;
+  rerankApplied?: boolean;
+}
+
 export interface Conversation {
   id: string;
   userId: string;
@@ -18,6 +31,7 @@ export interface Message {
   content: string;
   thinking?: Array<{ step: string; content: string }> | null;
   sources?: Array<Record<string, unknown>> | null;
+  responseMeta?: ResponseMeta | null;
   createdAt?: string;
 }
 
@@ -47,6 +61,7 @@ export interface StreamSnapshot {
   answer: string;
   thinking: Array<{ step: string; content: string }>;
   sources: Array<Record<string, unknown>>;
+  responseMeta?: ResponseMeta | null;
   events: SSEEvent[];
   completed: boolean;
   error?: string;

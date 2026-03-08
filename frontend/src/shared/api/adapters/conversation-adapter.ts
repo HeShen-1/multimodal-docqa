@@ -4,12 +4,31 @@ import type {
   ConversationDetail,
   ConversationList,
   Message,
+  ResponseMeta,
   SendMessageResponse,
 } from "@/shared/types/conversation";
 
 type AnyRecord = Record<string, unknown>;
 
 function normalizeMessage(raw: AnyRecord): Message {
+  const extraData = (raw.extra_data ?? raw.extraData ?? raw.response_meta ?? raw.responseMeta) as
+    | Record<string, unknown>
+    | undefined;
+  const responseMeta: ResponseMeta | null = extraData
+    ? {
+        modelName: extraData.model_name as string | undefined,
+        latencyMs: Number(extraData.latency_ms ?? 0) || undefined,
+        retrievedChunks: Number(extraData.retrieved_chunks ?? 0) || undefined,
+        citationCount: Number(extraData.citation_count ?? 0) || undefined,
+        fallbackReason: (extraData.fallback_reason as string | null | undefined) ?? null,
+        retrievalStrategy: extraData.retrieval_strategy as string | undefined,
+        rewrittenQuery: extraData.rewritten_query as string | undefined,
+        topScore: Number(extraData.top_score ?? 0) || undefined,
+        evidenceCoverage: Number(extraData.evidence_coverage ?? 0) || undefined,
+        rerankApplied: typeof extraData.rerank_applied === "boolean" ? (extraData.rerank_applied as boolean) : undefined,
+      }
+    : null;
+
   return {
     id: String(raw.id ?? ""),
     conversationId: String(raw.conversation_id ?? raw.conversationId ?? ""),
@@ -17,6 +36,7 @@ function normalizeMessage(raw: AnyRecord): Message {
     content: String(raw.content ?? ""),
     thinking: (raw.thinking as Array<{ step: string; content: string }> | undefined) ?? null,
     sources: (raw.sources as Array<Record<string, unknown>> | undefined) ?? null,
+    responseMeta,
     createdAt: (raw.created_at ?? raw.createdAt) as string | undefined,
   };
 }
@@ -64,4 +84,3 @@ export function adaptSendMessage(payload: unknown): SendMessageResponse {
     assistantMessage: normalizeMessage((raw.assistant_message ?? raw.assistantMessage ?? {}) as AnyRecord),
   };
 }
-

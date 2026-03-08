@@ -15,6 +15,7 @@ export function MessageBubble({
   const isUser = message.role === "user";
   const thinkingSteps = message.thinking ?? [];
   const sources = message.sources ?? [];
+  const responseMeta = message.responseMeta;
   const isDraft = message.id.startsWith("draft:");
 
   return (
@@ -34,6 +35,8 @@ export function MessageBubble({
               <span>{isDraft ? "流式草稿" : "AI 回复"}</span>
               {thinkingSteps.length ? <Badge variant="secondary">Thinking {thinkingSteps.length}</Badge> : null}
               {sources.length ? <Badge variant="secondary">Sources {sources.length}</Badge> : null}
+              {responseMeta?.modelName ? <Badge variant="secondary">{responseMeta.modelName}</Badge> : null}
+              {responseMeta?.retrievalStrategy ? <Badge variant="secondary">{responseMeta.retrievalStrategy}</Badge> : null}
             </div>
             {onInspect ? (
               <button
@@ -52,6 +55,15 @@ export function MessageBubble({
         ) : (
           <MarkdownContent content={message.content} className="text-slate-50" />
         )}
+
+        {!isUser && responseMeta ? (
+          <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+            {responseMeta.latencyMs != null ? <span>耗时 {Math.round(responseMeta.latencyMs)} ms</span> : null}
+            {responseMeta.retrievedChunks != null ? <span>命中 {responseMeta.retrievedChunks} 段</span> : null}
+            {responseMeta.citationCount != null ? <span>引用 {responseMeta.citationCount} 条</span> : null}
+            {responseMeta.fallbackReason ? <span>降级 {responseMeta.fallbackReason}</span> : null}
+          </div>
+        ) : null}
 
         <p className="mt-3 text-[11px] text-muted-foreground">{formatDateTime(message.createdAt)}</p>
       </div>

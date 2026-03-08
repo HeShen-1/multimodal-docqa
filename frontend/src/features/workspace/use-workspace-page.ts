@@ -253,7 +253,37 @@ export function useWorkspacePage() {
               }
 
               if (event.type === "done") {
-                return { ...next, completed: true, error: undefined };
+                return {
+                  ...next,
+                  completed: true,
+                  error: undefined,
+                  responseMeta: {
+                    modelName: typeof event.modelName === "string" ? event.modelName : undefined,
+                    latencyMs: typeof event.latencyMs === "number" ? event.latencyMs : Number(event.latencyMs ?? 0) || undefined,
+                    retrievedChunks:
+                      typeof event.retrievedChunks === "number"
+                        ? event.retrievedChunks
+                        : Number(event.retrievedChunks ?? 0) || undefined,
+                    citationCount:
+                      typeof event.citationCount === "number"
+                        ? event.citationCount
+                        : Number(event.citationCount ?? 0) || undefined,
+                    fallbackReason:
+                      typeof event.fallbackReason === "string" || event.fallbackReason === null
+                        ? (event.fallbackReason as string | null)
+                        : undefined,
+                    retrievalStrategy:
+                      typeof event.retrievalStrategy === "string" ? event.retrievalStrategy : undefined,
+                    rewrittenQuery: typeof event.rewrittenQuery === "string" ? event.rewrittenQuery : undefined,
+                    topScore: typeof event.topScore === "number" ? event.topScore : Number(event.topScore ?? 0) || undefined,
+                    evidenceCoverage:
+                      typeof event.evidenceCoverage === "number"
+                        ? event.evidenceCoverage
+                        : Number(event.evidenceCoverage ?? 0) || undefined,
+                    rerankApplied:
+                      typeof event.rerankApplied === "boolean" ? event.rerankApplied : undefined,
+                  },
+                };
               }
 
               if (event.type === "error") {

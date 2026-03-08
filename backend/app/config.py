@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     )
     chunk_size: int = 500
     chunk_overlap: int = 50
+    retrieval_enable_rerank: bool = False
+    retrieval_rerank_model: str = "BAAI/bge-reranker-base"
+    retrieval_rerank_device: str = "cpu"
+    retrieval_min_score: float = 0.08
+    retrieval_min_coverage: float = 0.18
 
     log_level: str = "INFO"
     log_file: str = "./logs/app.log"
