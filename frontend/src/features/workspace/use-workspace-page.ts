@@ -11,6 +11,7 @@ import {
   getSelectedAssistantMessage,
   mergeMessagesWithDraft,
 } from "@/features/workspace/workspace-view-model";
+import { resolveSelectedLlmModel, useLlmModelCatalog } from "@/features/llm-models/use-llm-model-catalog";
 import { workspaceApi } from "@/features/workspace/workspace-api";
 import { normalizeApiError } from "@/shared/api/errors";
 import { createEmptyStreamSnapshot, useWorkspaceStore } from "@/shared/store/workspace-store";
@@ -37,6 +38,14 @@ export function useWorkspacePage() {
   const clearStreamSnapshot = useWorkspaceStore((state) => state.clearStreamSnapshot);
   const setActiveStream = useWorkspaceStore((state) => state.setActiveStream);
   const stopActiveStream = useWorkspaceStore((state) => state.stopActiveStream);
+  const { catalog: modelCatalog, options: availableModels } = useLlmModelCatalog("chat");
+
+  useEffect(() => {
+    const resolvedModel = resolveSelectedLlmModel(modelCatalog, "chat", selectedModel);
+    if (resolvedModel !== selectedModel) {
+      setSelectedModel(resolvedModel);
+    }
+  }, [modelCatalog, selectedModel, setSelectedModel]);
 
   const currentSnapshot = selectedConversationId ? streamSnapshots[selectedConversationId] ?? null : null;
   const streaming = Boolean(
@@ -360,6 +369,7 @@ export function useWorkspacePage() {
     setEditingTitle,
     selectedConversationId,
     selectedModel,
+    modelOptions: availableModels.map((item) => ({ label: item.label, value: item.value })),
     activeStreamConversationId,
     streamSnapshots,
     listQuery,

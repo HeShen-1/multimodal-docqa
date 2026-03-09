@@ -126,6 +126,17 @@
 | POST | `/api/v1/share/cleanup` | 是 | 清理过期分享链接 |
 | POST | `/api/v1/share/{token}/access` | 否 | 通过 token 访问分享 |
 
+## Models
+
+| 方法 | 路径 | 登录 | 说明 |
+|---|---|---|---|
+| GET | `/api/v1/models` | 是 | 获取当前启用的可选模型列表 |
+
+补充说明：
+- 返回统一 `ApiResponse`，其中 `data.defaultModel` 为默认模型，`data.models` 为前端应使用的可选模型列表
+- 前端应以后端返回的模型列表为准，不再硬编码 LoRA 显示逻辑
+- `docqa-lora` 仅在 `LOCAL_LORA_ENABLED=true` 且基础模型/adapter 配置完整时返回
+
 ## 9. 缓存管理（Phase 3）
 
 | 方法 | 路径 | 登录 | 说明 |

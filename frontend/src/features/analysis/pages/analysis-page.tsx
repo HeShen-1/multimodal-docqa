@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { analysisApi } from "@/features/analysis/analysis-api";
 import { documentsApi } from "@/features/documents/documents-api";
-import { DEFAULT_LLM_MODEL, LLM_MODEL_OPTIONS } from "@/shared/config/llm-models";
+import { resolveSelectedLlmModel, useLlmModelCatalog } from "@/features/llm-models/use-llm-model-catalog";
+import { DEFAULT_LLM_MODEL } from "@/shared/config/llm-models";
 import { normalizeApiError } from "@/shared/api/errors";
 import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
@@ -50,6 +51,7 @@ export function AnalysisPage() {
     limit: 5,
     minSimilarity: 0.4,
   });
+  const { catalog: modelCatalog, options: availableModels } = useLlmModelCatalog("analysis");
 
   const documentsQuery = useQuery({
     queryKey: ["analysis-document-options"],
@@ -84,7 +86,24 @@ export function AnalysisPage() {
   });
 
   const documentOptions = documentsQuery.data?.map((doc) => ({ label: doc.fileName, value: doc.id })) ?? [];
-  const modelOptions = LLM_MODEL_OPTIONS.map((option) => ({ label: option.label, value: option.value }));
+  const modelOptions = useMemo(
+    () => availableModels.map((option) => ({ label: option.label, value: option.value })),
+    [availableModels],
+  );
+
+  useEffect(() => {
+    const resolvedSummaryModel = resolveSelectedLlmModel(modelCatalog, "analysis", summaryForm.model);
+    if (resolvedSummaryModel !== summaryForm.model) {
+      setSummaryForm((previous) => ({ ...previous, model: resolvedSummaryModel }));
+    }
+  }, [modelCatalog, summaryForm.model]);
+
+  useEffect(() => {
+    const resolvedKeywordModel = resolveSelectedLlmModel(modelCatalog, "analysis", keywordForm.model);
+    if (resolvedKeywordModel !== keywordForm.model) {
+      setKeywordForm((previous) => ({ ...previous, model: resolvedKeywordModel }));
+    }
+  }, [modelCatalog, keywordForm.model]);
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">

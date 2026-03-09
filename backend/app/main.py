@@ -14,6 +14,7 @@ from app.api.v1.cache import router as cache_router
 from app.api.v1.conversations import router as conversations_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.health import router as health_router
+from app.api.v1.models import router as models_router
 from app.api.v1.share import router as share_router
 from app.api.v1.stability import router as stability_router
 from app.api.v1.tags import router as tags_router
@@ -125,6 +126,7 @@ async def collect_api_stats(request, call_next):
 
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(models_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(cache_router, prefix="/api/v1")

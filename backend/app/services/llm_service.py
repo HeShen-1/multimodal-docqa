@@ -163,6 +163,70 @@ class LLMService:
 
         return ResolvedModel("ollama", requested_model, requested_model)
 
+    def get_default_model_name(self) -> str:
+        return self.ollama_model
+
+    def get_available_models(self) -> List[Dict[str, Any]]:
+        models = [
+            self._build_model_option(
+                value=self.ollama_model,
+                label=self._build_ollama_model_label(self.ollama_model),
+                provider="ollama",
+                is_default=True,
+            )
+        ]
+
+        if self._is_deepseek_available():
+            models.append(
+                self._build_model_option(
+                    value=self.DEEPSEEK_ALIAS,
+                    label="DeepSeek（API）",
+                    provider="deepseek",
+                    is_default=False,
+                )
+            )
+
+        if self._is_local_lora_available():
+            models.append(
+                self._build_model_option(
+                    value=self.local_lora_model_alias,
+                    label=f"{self.local_lora_model_alias}（本地 LoRA）",
+                    provider=self.LOCAL_LORA_PROVIDER,
+                    is_default=False,
+                )
+            )
+
+        return models
+
+    @staticmethod
+    def _build_model_option(value: str, label: str, provider: str, is_default: bool) -> Dict[str, Any]:
+        return {
+            "value": value,
+            "label": label,
+            "provider": provider,
+            "enabled": True,
+            "is_default": is_default,
+            "supports_chat": True,
+            "supports_analysis": True,
+        }
+
+    @staticmethod
+    def _build_ollama_model_label(model_name: str) -> str:
+        if model_name.startswith("qwen3-vl"):
+            return "Qwen3-VL（本地 Ollama）"
+        return f"{model_name}（本地 Ollama）"
+
+    def _is_deepseek_available(self) -> bool:
+        return bool(self.deepseek_base_url and self.deepseek_model and self.deepseek_api_key.strip())
+
+    def _is_local_lora_available(self) -> bool:
+        return bool(
+            self.local_lora_enabled
+            and self.local_lora_model_alias.strip()
+            and self.local_lora_base_model_path
+            and self.local_lora_adapter_path
+        )
+
     def _build_prompt(self, query: str, context: List[Dict], enable_thinking: bool = True) -> str:
         if not context:
             return (

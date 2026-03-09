@@ -2,7 +2,6 @@ import { RefreshCcw } from "lucide-react";
 
 import { MessageBubble } from "@/features/workspace/components/message-bubble";
 import type { WorkspacePageState } from "@/features/workspace/use-workspace-page";
-import { LLM_MODEL_OPTIONS } from "@/shared/config/llm-models";
 import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
 import { Loading } from "@/shared/ui/loading";
@@ -22,6 +21,7 @@ export function WorkspaceChatPanel({ state }: { state: WorkspacePageState }) {
     selectedAssistantMessage,
     selectedConversationId,
     selectedModel,
+    modelOptions,
     setInspectorMessageId,
     setMessageInput,
     setSelectedModel,
@@ -36,7 +36,7 @@ export function WorkspaceChatPanel({ state }: { state: WorkspacePageState }) {
           <Select
             className="w-52"
             value={selectedModel}
-            options={LLM_MODEL_OPTIONS.map((item) => ({ label: item.label, value: item.value }))}
+            options={modelOptions}
             onChange={(event) => setSelectedModel(event.target.value)}
           />
           <Button variant="secondary" size="sm" onClick={() => void listQuery.refetch()}>
