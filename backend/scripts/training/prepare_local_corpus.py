@@ -33,11 +33,181 @@ SUPPORTED_LOCAL_EXTENSIONS = {
     ".xml",
 }
 
+TEXT_SOURCE_ENCODINGS = ("utf-8", "utf-8-sig", "gb18030")
+PLAIN_TEXT_SECTION_TARGET_CHARS = 1200
+PLAIN_TEXT_SECTION_TRIGGER_CHARS = 900
+PLAIN_TEXT_HEADING_PATTERNS = (
+    re.compile(r"^第\s*[0-9零一二三四五六七八九十百千两]+\s*[章节卷篇回部集]\s*.*$"),
+    re.compile(r"^(chapter|part)\s+\d+\b.*$", re.IGNORECASE),
+    re.compile(r"^\d+(?:\.\d+){0,2}[、.．]\s*\S.*$"),
+)
+
 
 def slugify_document_name(path: Path) -> str:
     stem = path.stem.strip() or "document"
     slug = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "_", stem)
     return slug.strip("_") or "document"
+
+
+def read_text_source(path: Path) -> str:
+    for encoding in TEXT_SOURCE_ENCODINGS:
+        try:
+            return path.read_text(encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+    try:
+        return path.read_text(encoding="gb18030", errors="replace")
+    except UnicodeDecodeError:
+        pass
+    return path.read_text(encoding="latin-1")
+
+
+def normalize_plain_text_content(content: str, title: str) -> str:
+    normalized = normalize_plain_text_body(content)
+    if not normalized:
+        return f"# {title}\n"
+
+    paragraphs = split_plain_text_paragraphs(normalized)
+    sections = build_structured_text_sections(paragraphs)
+    if not sections:
+        return f"# {title}\n\n{normalized}\n"
+
+    lines = [f"# {title}", ""]
+    for heading, body in sections:
+        lines.append(f"## {heading}")
+        lines.append("")
+        lines.append(body)
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+def normalize_plain_text_body(content: str) -> str:
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n").replace("\ufeff", "")
+    normalized = re.sub(r"[ \t]+\n", "\n", normalized)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
+
+
+def split_plain_text_paragraphs(content: str) -> list[str]:
+    paragraphs: list[str] = []
+    for raw_block in re.split(r"\n\s*\n+", content):
+        block = raw_block.strip()
+        if not block:
+            continue
+
+        current_lines: list[str] = []
+        for raw_line in block.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if is_plain_text_heading(line):
+                if current_lines:
+                    paragraphs.append("\n".join(current_lines).strip())
+                    current_lines = []
+                paragraphs.append(line)
+            else:
+                current_lines.append(line)
+
+        if current_lines:
+            paragraphs.append("\n".join(current_lines).strip())
+
+    return paragraphs
+
+
+def build_structured_text_sections(paragraphs: list[str]) -> list[tuple[str, str]]:
+    if not paragraphs:
+        return []
+
+    explicit_sections = build_explicit_heading_sections(paragraphs)
+    if explicit_sections:
+        return explicit_sections
+
+    combined_length = sum(len(paragraph) for paragraph in paragraphs)
+    if combined_length < PLAIN_TEXT_SECTION_TRIGGER_CHARS:
+        return [("Content", "\n\n".join(paragraphs))]
+
+    return build_fallback_length_sections(paragraphs)
+
+
+def build_explicit_heading_sections(paragraphs: list[str]) -> list[tuple[str, str]]:
+    sections: list[tuple[str, str]] = []
+    preface: list[str] = []
+    current_heading: str | None = None
+    current_paragraphs: list[str] = []
+
+    for paragraph in paragraphs:
+        if is_plain_text_heading(paragraph):
+            if current_heading and current_paragraphs:
+                sections.extend(split_large_text_section(current_heading, current_paragraphs))
+            elif current_heading and not current_paragraphs:
+                sections.append((current_heading, ""))
+            current_heading = paragraph
+            current_paragraphs = []
+            continue
+
+        if current_heading is None:
+            preface.append(paragraph)
+        else:
+            current_paragraphs.append(paragraph)
+
+    if current_heading and current_paragraphs:
+        sections.extend(split_large_text_section(current_heading, current_paragraphs))
+    elif current_heading and not current_paragraphs:
+        sections.append((current_heading, ""))
+
+    if not sections:
+        return []
+
+    if preface:
+        first_heading, first_body = sections[0]
+        merged = "\n\n".join(preface + ([first_body] if first_body else []))
+        sections[0] = (first_heading, merged)
+
+    return [(heading, body.strip()) for heading, body in sections if body.strip()]
+
+
+def is_plain_text_heading(paragraph: str) -> bool:
+    text = paragraph.strip()
+    if not text or "\n" in text or len(text) > 80:
+        return False
+    return any(pattern.match(text) for pattern in PLAIN_TEXT_HEADING_PATTERNS)
+
+
+def split_large_text_section(heading: str, paragraphs: list[str]) -> list[tuple[str, str]]:
+    grouped_paragraphs = group_paragraphs_by_length(paragraphs, target_chars=PLAIN_TEXT_SECTION_TARGET_CHARS)
+    sections: list[tuple[str, str]] = []
+    for index, group in enumerate(grouped_paragraphs, start=1):
+        if len(grouped_paragraphs) == 1:
+            title = heading
+        else:
+            title = f"{heading}（续{index}）"
+        sections.append((title, "\n\n".join(group).strip()))
+    return sections
+
+
+def build_fallback_length_sections(paragraphs: list[str]) -> list[tuple[str, str]]:
+    groups = group_paragraphs_by_length(paragraphs, target_chars=PLAIN_TEXT_SECTION_TARGET_CHARS)
+    return [(f"Section {index}", "\n\n".join(group).strip()) for index, group in enumerate(groups, start=1)]
+
+
+def group_paragraphs_by_length(paragraphs: list[str], *, target_chars: int) -> list[list[str]]:
+    groups: list[list[str]] = []
+    current_group: list[str] = []
+    current_length = 0
+
+    for paragraph in paragraphs:
+        paragraph_length = len(paragraph)
+        if current_group and current_length + paragraph_length > target_chars:
+            groups.append(current_group)
+            current_group = []
+            current_length = 0
+        current_group.append(paragraph)
+        current_length += paragraph_length
+
+    if current_group:
+        groups.append(current_group)
+
+    return groups
 
 
 def render_processed_document_as_markdown(source_name: str, processed: dict[str, Any]) -> str:
@@ -76,13 +246,13 @@ def render_processed_document_as_markdown(source_name: str, processed: dict[str,
 
 
 def normalize_markdown_source(path: Path) -> str:
-    content = path.read_text(encoding="utf-8")
+    content = read_text_source(path)
     return content if content.lstrip().startswith("#") else f"# {path.stem}\n\n{content.strip()}\n"
 
 
 def normalize_text_source(path: Path) -> str:
-    content = path.read_text(encoding="utf-8")
-    return f"# {path.stem}\n\n{content.strip()}\n"
+    content = read_text_source(path)
+    return normalize_plain_text_content(content, path.stem)
 
 
 async def normalize_local_document(path: Path, processor: DocumentProcessor) -> tuple[str, dict[str, Any]]:
@@ -127,9 +297,9 @@ def write_manifest(entries: list[dict[str, Any]], output_path: Path) -> None:
             file.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-async def prepare_local_corpus(workspace_root: Path) -> dict[str, Any]:
+async def prepare_local_corpus(workspace_root: Path, *, enable_ocr: bool = True) -> dict[str, Any]:
     paths = ensure_docqa_workspace(workspace_root)
-    processor = DocumentProcessor()
+    processor = DocumentProcessor(enable_ocr=enable_ocr)
     documents = iter_supported_documents(paths["local_raw_docs"])
     manifest_entries: list[dict[str, Any]] = []
 
@@ -247,10 +417,11 @@ def main() -> None:
     parser.add_argument("--workspace-root", default=str(default_workspace_root()))
     parser.add_argument("--seed-output", action="store_true", help="Also generate blank annotation templates after normalization.")
     parser.add_argument("--answerable-limit-per-doc", type=int, default=3)
+    parser.add_argument("--disable-ocr", action="store_true", help="Skip OCR for embedded images during normalization.")
     args = parser.parse_args()
 
     workspace_root = Path(args.workspace_root)
-    summary = asyncio.run(prepare_local_corpus(workspace_root))
+    summary = asyncio.run(prepare_local_corpus(workspace_root, enable_ocr=not args.disable_ocr))
     if args.seed_output:
         summary["seed_annotations"] = generate_seed_annotations(
             workspace_root,

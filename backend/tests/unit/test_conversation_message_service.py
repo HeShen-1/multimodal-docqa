@@ -17,10 +17,13 @@ def _parse_sse(payload: str) -> dict:
 class _FakeLLMService:
     def parse_thinking_chain(self, response: str) -> dict:
         del response
-        return {"thinking": [{"step": "证据分析", "content": "先看命中的证据片段。"}], "answer": "这是最终答案。"}
+        return {
+            "thinking": [{"step": "证据分析", "content": "先看命中的证据片段。"}],
+            "answer": "这是最终答案。",
+        }
 
     def resolve_model(self, model=None):
-        return SimpleNamespace(provider="ollama", model_name=model or "qwen-local")
+        return SimpleNamespace(provider="local_lora", model_name=model or "docqa-lora")
 
     async def generate_answer(self, **kwargs):
         del kwargs
@@ -91,8 +94,8 @@ class _FakeRetrievalService:
 
 @pytest.mark.asyncio
 async def test_stream_message_events_emits_done_metadata_and_persists_extra_data(monkeypatch):
-    from app.services import conversation_service as conversation_service_module
     from app.services import conversation_message_service as message_service_module
+    from app.services import conversation_service as conversation_service_module
 
     add_calls = []
 
@@ -127,7 +130,7 @@ async def test_stream_message_events_emits_done_metadata_and_persists_extra_data
     events = []
     async for payload in ConversationMessageService.stream_message_events(
         conversation_id=uuid4(),
-        data=MessageCreate(content="报销标准是什么？", top_k=3, enable_thinking=True, model="qwen-local"),
+        data=MessageCreate(content="报销标准是什么？", top_k=3, enable_thinking=True, model="docqa-lora"),
         current_user={"user_id": uuid4()},
         db=SimpleNamespace(),
         retrieval_service=_FakeRetrievalService(),
@@ -136,7 +139,7 @@ async def test_stream_message_events_emits_done_metadata_and_persists_extra_data
         events.append(_parse_sse(payload))
 
     done_event = next(event for event in events if event["type"] == "done")
-    assert done_event["model_name"] == "qwen-local"
+    assert done_event["model_name"] == "docqa-lora"
     assert done_event["latency_ms"] >= 0
     assert done_event["retrieved_chunks"] == 1
     assert done_event["citation_count"] == 1
@@ -146,7 +149,7 @@ async def test_stream_message_events_emits_done_metadata_and_persists_extra_data
 
     assistant_call = add_calls[-1]
     assert assistant_call["role"] == "assistant"
-    assert assistant_call["extra_data"]["model_name"] == "qwen-local"
+    assert assistant_call["extra_data"]["model_name"] == "docqa-lora"
     assert assistant_call["extra_data"]["retrieved_chunks"] == 1
     assert assistant_call["extra_data"]["citation_count"] == 1
     assert assistant_call["extra_data"]["retrieval_strategy"] == "hybrid"

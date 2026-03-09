@@ -63,5 +63,6 @@ markdown2==2.4.12
 # Phase 5: 高级检索功能
 sentence-transformers==3.3.1
 transformers==4.46.3
+peft==0.13.2
 huggingface-hub==0.26.5
 pgvector==0.2.5

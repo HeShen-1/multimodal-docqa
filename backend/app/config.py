@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-chat"
+    local_lora_enabled: bool = False
+    local_lora_model_alias: str = "docqa-lora"
+    local_lora_base_model_path: str = ""
+    local_lora_adapter_path: str = ""
+    local_lora_device: str = "auto"
+    local_lora_max_input_length: int = Field(1536, ge=256, le=8192)
+    local_lora_max_new_tokens: int = Field(160, ge=1, le=2048)
+    local_lora_temperature: float = Field(0.1, ge=0.0, le=1.0)
 
     postgres_host: str = "localhost"
     postgres_port: int = 5432

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import threading
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from pathlib import Path
+from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional, Union
 
 import aiohttp
 import requests
@@ -22,12 +25,26 @@ class ResolvedModel:
     requested_model: str
     api_model: str
 
+    @property
+    def model_name(self) -> str:
+        return self.requested_model or self.api_model
+
+
+@dataclass(frozen=True)
+class LocalLoraRuntime:
+    model: Any
+    tokenizer: Any
+
 
 class LLMService:
-    """统一的 LLM 调用服务"""
+    """统一的 LLM 调用服务。"""
 
     DEEPSEEK_ALIAS = "deepseek"
     QWEN_ALIAS = "qwen"
+    LOCAL_LORA_PROVIDER = "local_lora"
+    _local_lora_runtime: ClassVar[LocalLoraRuntime | None] = None
+    _local_lora_runtime_key: ClassVar[tuple[str, str, str] | None] = None
+    _local_lora_runtime_lock: ClassVar[threading.Lock] = threading.Lock()
 
     def __init__(self, settings: Settings | None = None, default_model: str | None = None):
         self.settings = settings or get_settings()
@@ -37,6 +54,14 @@ class LLMService:
         self.deepseek_base_url = self.settings.deepseek_base_url.rstrip("/")
         self.deepseek_api_key = self.settings.deepseek_api_key
         self.deepseek_model = self.settings.deepseek_model
+        self.local_lora_enabled = self.settings.local_lora_enabled
+        self.local_lora_model_alias = (self.settings.local_lora_model_alias or "docqa-lora").strip() or "docqa-lora"
+        self.local_lora_base_model_path = self.settings.local_lora_base_model_path.strip()
+        self.local_lora_adapter_path = self.settings.local_lora_adapter_path.strip()
+        self.local_lora_device = (self.settings.local_lora_device or "auto").strip() or "auto"
+        self.local_lora_max_input_length = self.settings.local_lora_max_input_length
+        self.local_lora_max_new_tokens = self.settings.local_lora_max_new_tokens
+        self.local_lora_temperature = self.settings.local_lora_temperature
         self.default_model = default_model
         logger.info("LLMService 初始化完成")
 
@@ -98,6 +123,7 @@ class LLMService:
         except CircuitBreakerOpenError:
             logger.error(f"{resolved.provider} 熔断开启，通用对话降级")
             if stream:
+
                 async def error_generator() -> AsyncGenerator[str, None]:
                     yield "抱歉，服务暂时繁忙，请稍后重试。"
 
@@ -106,6 +132,7 @@ class LLMService:
         except Exception as exc:
             logger.error(f"通用对话生成失败: {exc}")
             if stream:
+
                 async def error_generator() -> AsyncGenerator[str, None]:
                     yield "抱歉，我暂时无法回答您的问题。"
 
@@ -118,6 +145,11 @@ class LLMService:
     def resolve_model(self, model: Optional[str] = None) -> ResolvedModel:
         requested_model = (model or self.default_model or "").strip()
         normalized = requested_model.lower()
+        local_alias = self.local_lora_model_alias.lower()
+
+        if normalized == local_alias:
+            self._ensure_local_lora_selection_available()
+            return ResolvedModel(self.LOCAL_LORA_PROVIDER, self.local_lora_model_alias, self.local_lora_model_alias)
 
         if not requested_model or requested_model == self.ollama_model or normalized in {"ollama", self.QWEN_ALIAS}:
             api_model = self.ollama_model if normalized in {"", "ollama", self.QWEN_ALIAS} else requested_model
@@ -136,14 +168,16 @@ class LLMService:
             return (
                 f"你是智能助手。用户问题：{query}\n\n"
                 "判断：如果是日常问候或通用知识，直接回答；"
-                "如果需要特定文档，告知用户需要上传文档。\n\n"
+                "如果需要特定文档，请告知用户需要上传文档。\n\n"
                 "回答："
             )
 
         context_text = "\n\n".join(
             [
-                f"[来源: {ctx.get('metadata', {}).get('document_id', 'unknown')}, "
-                f"第{ctx.get('metadata', {}).get('page', 1)}页]\n{ctx['content']}"
+                (
+                    f"[来源: {ctx.get('metadata', {}).get('document_id', 'unknown')}, "
+                    f"第 {ctx.get('metadata', {}).get('page', 1)} 页]\n{ctx['content']}"
+                )
                 for ctx in context
             ]
         )
@@ -161,6 +195,13 @@ class LLMService:
         resolved: ResolvedModel,
         max_tokens: int,
     ) -> str:
+        if resolved.provider == self.LOCAL_LORA_PROVIDER:
+            return await self._local_lora_complete(
+                prompt,
+                temperature=temperature,
+                resolved=resolved,
+                max_tokens=max_tokens,
+            )
         if resolved.provider == "deepseek":
             return await self._deepseek_complete(prompt, temperature=temperature, resolved=resolved, max_tokens=max_tokens)
         return await self._ollama_complete(prompt, temperature=temperature, resolved=resolved, max_tokens=max_tokens)
@@ -171,9 +212,202 @@ class LLMService:
         temperature: float,
         resolved: ResolvedModel,
     ) -> AsyncGenerator[str, None]:
+        if resolved.provider == self.LOCAL_LORA_PROVIDER:
+            return self._local_lora_stream(prompt, temperature=temperature, resolved=resolved)
         if resolved.provider == "deepseek":
             return self._deepseek_stream(prompt, temperature=temperature, resolved=resolved)
         return self._ollama_stream(prompt, temperature=temperature, resolved=resolved)
+
+    def _ensure_local_lora_selection_available(self) -> None:
+        if not self.local_lora_enabled:
+            raise LLMProviderError(
+                f"本地 LoRA 模型 `{self.local_lora_model_alias}` 未启用，请先设置 LOCAL_LORA_ENABLED=true"
+            )
+
+        missing_env_keys = []
+        if not self.local_lora_base_model_path:
+            missing_env_keys.append("LOCAL_LORA_BASE_MODEL_PATH")
+        if not self.local_lora_adapter_path:
+            missing_env_keys.append("LOCAL_LORA_ADAPTER_PATH")
+        if missing_env_keys:
+            raise LLMProviderError(
+                f"本地 LoRA 模型 `{self.local_lora_model_alias}` 缺少配置：{', '.join(missing_env_keys)}"
+            )
+
+    def _local_lora_cache_key(self) -> tuple[str, str, str]:
+        return (
+            self.local_lora_base_model_path,
+            self.local_lora_adapter_path,
+            self.local_lora_device.lower(),
+        )
+
+    def _get_local_lora_runtime(self) -> LocalLoraRuntime:
+        self._ensure_local_lora_selection_available()
+        cache_key = self._local_lora_cache_key()
+        cls = type(self)
+
+        if cls._local_lora_runtime is not None and cls._local_lora_runtime_key == cache_key:
+            return cls._local_lora_runtime
+
+        with cls._local_lora_runtime_lock:
+            if cls._local_lora_runtime is not None and cls._local_lora_runtime_key == cache_key:
+                return cls._local_lora_runtime
+
+            runtime = self._build_local_lora_runtime()
+            cls._local_lora_runtime = runtime
+            cls._local_lora_runtime_key = cache_key
+            return runtime
+
+    def _build_local_lora_runtime(self) -> LocalLoraRuntime:
+        self._ensure_local_lora_selection_available()
+
+        base_model_path = Path(self.local_lora_base_model_path)
+        adapter_path = Path(self.local_lora_adapter_path)
+        if not base_model_path.exists():
+            raise LLMProviderError(f"LOCAL_LORA_BASE_MODEL_PATH 不存在：{base_model_path}")
+        if not adapter_path.exists():
+            raise LLMProviderError(f"LOCAL_LORA_ADAPTER_PATH 不存在：{adapter_path}")
+
+        try:
+            import torch
+            from peft import PeftModel
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+        except ImportError as exc:
+            raise LLMProviderError(
+                "本地 LoRA 推理依赖缺失，请在 `multimodal-docqa` 环境安装 torch 与 peft"
+            ) from exc
+
+        runtime_device = self._resolve_local_lora_runtime_device(torch)
+        tokenizer_source = adapter_path if (adapter_path / "tokenizer_config.json").exists() else base_model_path
+        tokenizer = AutoTokenizer.from_pretrained(
+            str(tokenizer_source),
+            use_fast=False,
+            trust_remote_code=True,
+        )
+        if tokenizer.pad_token is None and tokenizer.eos_token is not None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        model = AutoModelForCausalLM.from_pretrained(
+            str(base_model_path),
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
+            torch_dtype=self._resolve_local_lora_torch_dtype(torch, runtime_device),
+        )
+        model = PeftModel.from_pretrained(model, str(adapter_path))
+        model = model.to(runtime_device)
+        model.eval()
+        logger.info(f"本地 LoRA 运行时加载完成: alias={self.local_lora_model_alias}, device={runtime_device}")
+        return LocalLoraRuntime(model=model, tokenizer=tokenizer)
+
+    def _resolve_local_lora_runtime_device(self, torch_module: Any) -> str:
+        requested_device = self.local_lora_device.lower()
+        if requested_device == "auto":
+            return "cuda" if torch_module.cuda.is_available() else "cpu"
+        if requested_device.startswith("cuda") and not torch_module.cuda.is_available():
+            raise LLMProviderError("LOCAL_LORA_DEVICE 配置为 CUDA，但当前环境未检测到可用 GPU")
+        return requested_device
+
+    @staticmethod
+    def _resolve_local_lora_torch_dtype(torch_module: Any, runtime_device: str) -> Any:
+        if runtime_device.startswith("cuda"):
+            return torch_module.float16
+        return torch_module.float32
+
+    async def _local_lora_complete(
+        self,
+        prompt: str,
+        temperature: float,
+        resolved: ResolvedModel,
+        max_tokens: int,
+    ) -> str:
+        del resolved
+        answer = await asyncio.to_thread(
+            self._run_local_lora_generation,
+            prompt,
+            temperature,
+            max_tokens,
+        )
+        return answer.strip()
+
+    async def _local_lora_stream(
+        self,
+        prompt: str,
+        temperature: float,
+        resolved: ResolvedModel,
+    ) -> AsyncGenerator[str, None]:
+        response_text = await self._local_lora_complete(
+            prompt,
+            temperature=temperature,
+            resolved=resolved,
+            max_tokens=self.local_lora_max_new_tokens,
+        )
+        chunk_size = 12
+        for start in range(0, len(response_text), chunk_size):
+            yield response_text[start : start + chunk_size]
+
+    def _run_local_lora_generation(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        runtime = self._get_local_lora_runtime()
+
+        try:
+            import torch
+        except ImportError as exc:
+            raise LLMProviderError("本地 LoRA 推理依赖缺失，请在 `multimodal-docqa` 环境安装 torch") from exc
+
+        tokenizer = runtime.tokenizer
+        prompt_text = prompt
+        if hasattr(tokenizer, "apply_chat_template"):
+            prompt_text = tokenizer.apply_chat_template(
+                self._build_chat_messages(prompt),
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+
+        inputs = tokenizer(
+            prompt_text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.local_lora_max_input_length,
+        )
+        inputs = self._move_inputs_to_model_device(inputs, runtime.model)
+
+        generation_kwargs: Dict[str, Any] = {
+            "max_new_tokens": max(1, min(max_tokens, self.local_lora_max_new_tokens)),
+            "pad_token_id": tokenizer.pad_token_id,
+            "eos_token_id": tokenizer.eos_token_id,
+            "do_sample": temperature > 0,
+        }
+        if temperature > 0:
+            generation_kwargs["temperature"] = temperature
+            generation_kwargs["top_p"] = 0.9
+
+        with torch.no_grad():
+            output_ids = runtime.model.generate(**inputs, **generation_kwargs)
+
+        input_length = inputs["input_ids"].shape[-1]
+        generated_ids = output_ids[0][input_length:]
+        answer = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+        if answer:
+            return answer
+
+        decoded_full_text = tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()
+        if decoded_full_text.startswith(prompt_text):
+            return decoded_full_text[len(prompt_text) :].strip()
+        return decoded_full_text
+
+    @staticmethod
+    def _move_inputs_to_model_device(inputs: Dict[str, Any], model: Any) -> Dict[str, Any]:
+        try:
+            device = next(model.parameters()).device
+        except (AttributeError, StopIteration, TypeError):
+            device = getattr(model, "device", None)
+
+        if device is None:
+            return inputs
+
+        return {
+            key: value.to(device) if hasattr(value, "to") else value
+            for key, value in inputs.items()
+        }
 
     async def _ollama_complete(
         self,
@@ -187,7 +421,7 @@ class LLMService:
             "top_p": 0.9,
             "num_predict": max_tokens,
         }
-        
+
         async def _generate_once():
             return await self.ollama_client.generate(
                 model=resolved.api_model,
@@ -369,7 +603,7 @@ class LLMService:
         thinking_steps = []
         if thinking_match:
             thinking_text = thinking_match.group(1)
-            steps = re.findall(r"\d+\.\s*([^:：\n]+)[:：]\s*([^\n]+)", thinking_text)
+            steps = re.findall(r"\d+\.\s*([^:\n：]+)\s*[:：]\s*([^\n]+)", thinking_text)
             thinking_steps = [
                 {"step": step.strip(), "content": content.strip()}
                 for step, content in steps

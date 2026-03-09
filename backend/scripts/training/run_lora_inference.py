@@ -9,7 +9,7 @@ from scripts.training.build_qlora_dataset import SYSTEM_PROMPT, build_user_messa
 from scripts.training.run_qlora_sft import build_quantization_config, resolve_torch_dtype
 
 
-def parse_args() -> argparse.Namespace:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run base-model or LoRA inference for local DocQA evaluation.")
     parser.add_argument("--base-model", default="Qwen/Qwen2.5-3B-Instruct")
     parser.add_argument(
@@ -28,13 +28,17 @@ def parse_args() -> argparse.Namespace:
         help="Prediction JSONL output path.",
     )
     parser.add_argument("--max-input-length", type=int, default=1536)
-    parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--max-new-tokens", type=int, default=160)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=0.9)
     parser.add_argument("--base-only", action="store_true", help="Ignore adapter_path and run base-model inference only.")
     parser.add_argument("--no-4bit", action="store_true", help="Disable 4-bit loading and run full precision inference.")
     parser.add_argument("--sample-limit", type=int, help="Optional limit for smoke inference.")
-    return parser.parse_args()
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    return build_arg_parser().parse_args()
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -95,7 +99,7 @@ def ensure_inference_dependencies() -> dict[str, Any]:
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
     except ImportError as exc:
         raise RuntimeError(
-            "缺少推理依赖。请先安装 backend/requirements-train.txt，并确认 Transformers / PEFT / bitsandbytes 可用。"
+            "缺少推理依赖。请先安装 backend/requirements-train.txt，并确认 Transformers、PEFT、bitsandbytes 可用。"
         ) from exc
 
     return {
@@ -135,9 +139,11 @@ def load_generation_model(args: argparse.Namespace, deps: dict[str, Any]) -> tup
     model_kwargs: dict[str, Any] = {
         "trust_remote_code": True,
         "torch_dtype": resolve_torch_dtype(torch),
+        "low_cpu_mem_usage": True,
     }
     if quantization_config is not None:
         model_kwargs["quantization_config"] = quantization_config
+    if torch.cuda.is_available():
         model_kwargs["device_map"] = "auto"
 
     model = AutoModelForCausalLM.from_pretrained(args.base_model, **model_kwargs)
@@ -155,16 +161,7 @@ def _move_inputs_to_device(inputs: dict[str, Any], model: Any) -> dict[str, Any]
     return {key: value.to(device) for key, value in inputs.items()}
 
 
-def generate_answer(record: dict[str, Any], model: Any, tokenizer: Any, args: argparse.Namespace) -> str:
-    prompt_text = render_prompt(record, tokenizer)
-    inputs = tokenizer(
-        prompt_text,
-        return_tensors="pt",
-        truncation=True,
-        max_length=args.max_input_length,
-    )
-    inputs = _move_inputs_to_device(inputs, model)
-
+def build_generation_kwargs(args: argparse.Namespace, tokenizer: Any) -> dict[str, Any]:
     generation_kwargs: dict[str, Any] = {
         "max_new_tokens": args.max_new_tokens,
         "pad_token_id": tokenizer.pad_token_id,
@@ -174,8 +171,21 @@ def generate_answer(record: dict[str, Any], model: Any, tokenizer: Any, args: ar
     if args.temperature > 0:
         generation_kwargs["temperature"] = args.temperature
         generation_kwargs["top_p"] = args.top_p
+    return generation_kwargs
 
-    with deps_no_grad(model):
+
+def generate_answer(record: dict[str, Any], model: Any, tokenizer: Any, args: argparse.Namespace) -> str:
+    prompt_text = render_prompt(record, tokenizer)
+    inputs = tokenizer(
+        prompt_text,
+        return_tensors="pt",
+        truncation=True,
+        max_length=args.max_input_length,
+    )
+    inputs = _move_inputs_to_device(inputs, model)
+    generation_kwargs = build_generation_kwargs(args, tokenizer)
+
+    with deps_no_grad():
         output_ids = model.generate(**inputs, **generation_kwargs)
 
     input_length = inputs["input_ids"].shape[-1]
@@ -189,8 +199,7 @@ def generate_answer(record: dict[str, Any], model: Any, tokenizer: Any, args: ar
 
 
 class deps_no_grad:
-    def __init__(self, model: Any):
-        self.model = model
+    def __init__(self):
         self.torch = __import__("torch")
         self._context = None
 

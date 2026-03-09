@@ -63,7 +63,7 @@
 补充说明：
 - `POST /api/v1/conversations/{conversation_id}/messages`
 - `POST /api/v1/conversations/{conversation_id}/messages/stream`
-- 两个接口均新增可选字段 `model`，支持传入 `deepseek` 或 `qwen3-vl:2b-thinking-q4_K_M`
+- 两个接口均新增可选字段 `model`，支持传入 `deepseek`、`docqa-lora` 或任意已安装的 Ollama 模型名（如 `qwen3-vl:2b-thinking-q4_K_M`）
 - 当用户当前已处于“最新空白会话”时，后端会复用该会话，避免重复创建草稿会话
 - 流式 SSE 的 `done` 事件现额外返回：
   - `model_name`

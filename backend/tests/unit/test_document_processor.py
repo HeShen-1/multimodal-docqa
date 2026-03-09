@@ -1,4 +1,5 @@
 import pytest
+
 from app.services.document_processor import DocumentProcessor
 
 
@@ -8,34 +9,34 @@ def processor():
 
 
 def test_chunk_text(processor):
-    """测试文本分块"""
-    text = "这是一段测试文本。" * 100
+    """娴嬭瘯鏂囨湰鍒嗗潡"""
+    text = "杩欐槸涓€娈垫祴璇曟枃鏈€?" * 100
     chunks = processor._chunk_text(text)
     assert len(chunks) > 0
     assert all(len(chunk) <= processor.chunk_size + 100 for chunk in chunks)
 
 
 def test_chunk_text_makes_forward_progress(processor):
-    """测试长文本在重叠分块时不会卡死或无限增长"""
+    """娴嬭瘯闀挎枃鏈湪閲嶅彔鍒嗗潡鏃朵笉浼氬崱姝绘垨鏃犻檺澧為暱"""
     processor.chunk_size = 40
     processor.chunk_overlap = 20
-    text = ("甲" * 18 + "。" + "乙" * 18 + "。") * 200
+    text = ("鐢?" * 18 + "銆?" + "涔?" * 18 + "銆?") * 200
 
     chunks = processor._chunk_text(text)
 
     assert len(chunks) > 1
     assert len(chunks) < 2000
     assert all(chunk.strip() for chunk in chunks)
-    assert chunks[-1].endswith("。")
+    assert chunks[-1].endswith("銆?")
 
 
 def test_build_chunks_contains_parent_chunk_index(processor):
-    """测试结构化分块会携带父块索引"""
+    """娴嬭瘯缁撴瀯鍖栧垎鍧椾細鎼哄甫鐖跺潡绱㈠紩"""
     text = (
-        "第一章 总览\n"
-        + "这是总览部分。" * 80
-        + "\n\n第二章 细节\n"
-        + "这是细节部分。" * 80
+        "绗竴绔?鎬昏\n"
+        + "杩欐槸鎬昏閮ㄥ垎銆?" * 80
+        + "\n\n绗簩绔?缁嗚妭\n"
+        + "杩欐槸缁嗚妭閮ㄥ垎銆?" * 80
     )
 
     chunks, parent_count = processor._build_chunks(text=text, page=1, chunk_type="text")
@@ -65,7 +66,7 @@ async def test_process_csv(processor, tmp_path):
 @pytest.mark.asyncio
 async def test_process_json(processor, tmp_path):
     file_path = tmp_path / "sample.json"
-    file_path.write_text('{"title":"文档","tags":["a","b"]}', encoding="utf-8")
+    file_path.write_text('{"title":"鏂囨。","tags":["a","b"]}', encoding="utf-8")
     result = await processor.process_document(file_path)
     assert result["metadata"]["chunk_count"] > 0
     assert result["metadata"]["image_count"] == 0
@@ -76,9 +77,17 @@ async def test_process_json(processor, tmp_path):
 @pytest.mark.asyncio
 async def test_process_html(processor, tmp_path):
     file_path = tmp_path / "sample.html"
-    file_path.write_text("<html><body><h1>标题</h1><p>正文</p></body></html>", encoding="utf-8")
+    file_path.write_text("<html><body><h1>鏍囬</h1><p>姝ｆ枃</p></body></html>", encoding="utf-8")
     result = await processor.process_document(file_path)
     assert result["metadata"]["chunk_count"] > 0
     assert result["metadata"]["image_count"] == 0
     assert result["metadata"]["processing_summary"]["source_type"] == "text"
 
+
+@pytest.mark.asyncio
+async def test_ocr_image_returns_empty_when_ocr_disabled():
+    processor = DocumentProcessor(enable_ocr=False)
+
+    result = await processor._ocr_image(b"not-an-image")
+
+    assert result == {"text": "", "blocks": []}

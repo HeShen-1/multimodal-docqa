@@ -39,10 +39,11 @@ class _HTMLTextExtractor(HTMLParser):
 class DocumentProcessor:
     """文档处理服务"""
 
-    def __init__(self):
+    def __init__(self, *, enable_ocr: bool = True):
         self.settings = get_settings()
         self.chunk_size = self.settings.chunk_size
         self.chunk_overlap = self.settings.chunk_overlap
+        self.enable_ocr = enable_ocr
         self._ocr: PaddleOCR | None = None
 
     @property
@@ -653,6 +654,8 @@ class DocumentProcessor:
         return "\n".join(filtered_lines)
 
     async def _ocr_image(self, image_bytes: bytes) -> Dict[str, Any]:
+        if not self.enable_ocr:
+            return {"text": "", "blocks": []}
         try:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, self._run_ocr, image_bytes)
